@@ -3,8 +3,9 @@ from os import path as os_PATH, sep
 from pathlib import Path
 from random import randint
 from re import search, sub
+from collections import deque
 from threading import Thread
-from time import time, sleep
+from time import time, sleep, perf_counter
 from typing import Union
 from urllib.parse import quote, urlparse, unquote
 
@@ -15,13 +16,21 @@ from requests import Session
 from .common import make_valid_name, get_usable_path
 
 
-class Downloader(object):
+class DownloadKit:
     def __init__(self,
+                 goal_path: str = None,
                  size: int = 3,
                  session_or_options: Union[Session, SessionOptions] = None,
                  timeout: float = None,
                  file_exists: str = 'rename'):
-        self._size = size
+        self.size = size
+        self.missions = deque()
+        self.threads = {i: None for i in range(self._size)}
+        self.任务管理线程 = None
+        self.线程管理线程 = None
+        self.信息显示线程 = None
+
+        self.goal_path = goal_path
         self.retry: int = 3
         self.interval: int = 5
         self.timeout: float = timeout if timeout is not None else 20
@@ -34,11 +43,7 @@ class Downloader(object):
         else:
             self.session = Drission(driver_or_options=False).session
 
-        self.missions = []
-        self.fail_list = []
-        self.threads = {i: None for i in range(self._size)}
-        self.missions_manager_thread = None
-        self.threads_manager_thread = None
+        self.show()
 
     @property
     def size(self):
@@ -46,7 +51,8 @@ class Downloader(object):
 
     @size.setter
     def size(self, size):
-        pass
+        # todo: 改成可修改字典大小
+        self._size = size
 
     @property
     def file_exists(self):
@@ -58,120 +64,97 @@ class Downloader(object):
             raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
         self._file_exists = mode
 
-    def go(self):
-        if self.missions_manager_thread is None or not self.missions_manager_thread.is_alive():
-            self.missions_manager_thread = Thread(target=self._missions_manage)
-            self.missions_manager_thread.start()
-
-        if self.threads_manager_thread is None or not self.threads_manager_thread.is_alive():
-            self.threads_manager_thread = Thread(target=self._threads_manage)
-            self.threads_manager_thread.start()
-
-        sleep(.5)  # 等待线程开始
-
     def show(self):
-        self.show_thread = Thread(target=self._show)
-        self.show_thread.start()
+        if self.信息显示线程 is None or not self.信息显示线程.is_alive():
+            self.信息显示线程 = Thread(target=self._show)
+            self.信息显示线程.start()
 
     def _show(self):
-        # while self._check_thread_alive():
-        while True:
-            # print(self.threads)
-            for k, v in self.threads.items():
-                print(k, v)
-            print()
+        t1 = perf_counter()
+        while self.is_running() or perf_counter() - t1 < 2:
+            mis = [f"{i['file_url']}\n" for i in self.missions]
+            txt = [f'{k} {v["info"]} {v["data"]["file_url"]}\n' if v is not None else f'{k} None\n' for k, v in self.threads.items()]
+            print(f"{''.join(mis)}\n{''.join(txt)}\n", flush=False)
             sleep(.5)
+        # print('显示进程停止', flush=False)
 
-        # for k, v in self.threads.items():
-        #     print(k, v)
+    def go(self):
+        if self.任务管理线程 is None or not self.任务管理线程.is_alive():
+            print('任务线程启动', flush=False)
+            self.任务管理线程 = Thread(target=self._missions_manage)
+            self.任务管理线程.start()
 
-    def add_mission(self,
-                    file_url: str,
-                    goal_path: str,
-                    session: Session = None,
-                    rename: str = None,
-                    file_exists: str = None,
-                    post_data: Union[str, dict] = None,
-                    retry: int = None,
-                    interval: float = None,
-                    **kwargs):
-        """添加一个任务"""
-        if file_exists is not None and file_exists.lower() not in ('skip', 'overwrite', 'rename'):
-            raise ValueError("file_exists只能是'skip', 'overwrite', 'rename'。")
+        if self.线程管理线程 is None or not self.线程管理线程.is_alive():
+            print('管理线程启动', flush=False)
+            self.线程管理线程 = Thread(target=self._threads_manage)
+            self.线程管理线程.start()
 
-        # data = {'file_url': file_url,
-        #         'goal_path': goal_path,
-        #         'session': session or self.session,
-        #         'rename': rename,
-        #         'file_exists': file_exists or self.file_exists,
-        #         'post_data': post_data,
-        #         'retry': retry,
-        #         'interval': interval,
-        #         'kwargs': kwargs}
-        # self.go()
-        data = file_url
+    def add(self,
+            file_url: str,
+            goal_path: str = None,
+            session: Session = None,
+            rename: str = None,
+            file_exists: str = None,
+            post_data: Union[str, dict] = None,
+            retry: int = None,
+            interval: float = None,
+            **kwargs):
+        data = {'file_url': file_url,
+                'goal_path': goal_path or self.goal_path,
+                'session': session or self.session,
+                'rename': rename,
+                'file_exists': file_exists or self.file_exists,
+                'post_data': post_data,
+                'retry': retry if retry is not None else self.retry,
+                'interval': interval if interval is not None else self.interval,
+                'kwargs': kwargs}
         self.missions.append(data)
-        print(self.missions)
-        # self.go()
+        self.go()
 
     def _missions_manage(self):
-        """负责把任务分配到可用线程"""
-        # while self.missions:
-        while True:
-            num = self._get_usable_thread()
-            self._mission_to_thread(num)
+        t1 = perf_counter()
+        while self.missions or perf_counter() - t1 < 2:
+            if self.missions:
+                num = self._get_usable_thread()
+                msg = {'thread': None,
+                       'result': None,
+                       'info': None,
+                       'close': False,
+                       'data': self.missions.popleft()}
+                thread = Thread(target=self._download, args=(msg,))
+                msg['thread'] = thread
+                thread.start()
+                self.threads[num] = msg
 
-    def _threads_manage(self):
-        """负责把完成的线程清除出列表"""
-        while True:
-            for k, v in self.threads.items():
-                if isinstance(v, dict) and not v['thread'].is_alive():
-                    # TODO: 保存结果
-                    self.threads[k] = None
-
-            if not self._check_thread_alive():
-                break
-
-    def _mission_to_thread(self, num: int):
-        if self.missions:
-            d1 = {'thread': None,
-                  'result': None,
-                  'info': None,
-                  'close': False,
-                  'data': self.missions[-1],  # missions改成先进先出
-                  'state': None}
-            thread = Thread(target=self.download, args=(d1,))
-            d1['thread'] = thread
-            print(f'num:{num}',flush=False)
-            self.threads[num] = d1
-            thread.start()
-            self.missions.pop(-1)
-            sleep(.5)
-            # print(f'\n减后{self.missions}',flush=False)
-            # print(num, self.threads[num])
-
-    def _check_thread_alive(self):
-        """检查是否有线程还在运行中"""
-        # print('d')
-        return any([v['thread'].is_alive() for k, v in self.threads.items() if isinstance(v, dict)])
+        print('任务管理线程停止', flush=False)
 
     def _get_usable_thread(self):
         """获取可用线程"""
         while True:
             for k, v in self.threads.items():
                 if v is None:
-                    print('获得1个')
-                    self.threads[k] = True
                     return k
 
-    def download(self, args: dict):
-        for i in range(20):
-            args['state'] = i
-            # print(args['data'])
-            sleep(.5)
-        args['result'] = 'ok'
+    def _threads_manage(self):
+        """负责把完成的线程清除出列表"""
+        t1 = perf_counter()
+        while True:
+            for k, v in self.threads.items():
+                if isinstance(v, dict) and not v['thread'].is_alive():
+                    # TODO: 保存结果
+                    # print(v['info'])
+                    self.threads[k] = None
 
-    def download1(self, args: dict):
+            if perf_counter() - t1 > 2 and not self.is_running():
+                break
+
+        print('管理线程停止', flush=False)
+
+    def is_running(self):
+        """检查是否有线程还在运行中"""
+        return [k for k, v in self.threads.items() if v is not None]
+
+    def _download(self, args: dict):
         """下载一个文件"""
         file_url = args['data']['file_url']
         goal_path = args['data']['goal_path']
@@ -183,46 +166,28 @@ class Downloader(object):
         retry_times = args['data']['retry'] if args['data']['retry'] is not None else self.retry
         retry_interval = args['data']['interval'] if args['data']['interval'] is not None else self.interval
 
-        def set_result(res, state, info):
+        def set_result(res, info):
             args['result'] = res
-            args['state'] = state
             args['info'] = info
 
         if file_exists == 'skip' and Path(f'{goal_path}{sep}{rename}').exists():
-            # if show_msg:
-            #     print(f'{file_url}\n{goal_path}{sep}{rename}\n存在同名文件，已跳过。\n')
-            # args['result'] = None
-            # args['state'] = 'skip'
-            # args['info'] = '已跳过，因存在同名文件。'
-            set_result(None, 'skip', '已跳过，因存在同名文件。')
+            set_result(None, '已跳过')
             return
 
-        def do():
+        def do() -> tuple:
             kwargs['stream'] = True
             if 'timeout' not in kwargs:
                 kwargs['timeout'] = 20
 
             # 生成临时的response
             mode = 'post' if post_data is not None else 'get'
-            r, info = self._make_response(file_url,
-                                          session=session,
-                                          mode=mode,
-                                          data=post_data,
-                                          # show_errmsg=show_errmsg,
-                                          **kwargs)
+            r, info = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
             if r is None:
-                # if show_msg:
-                #     print(info)
-                set_result(False, 'fail', info)
-                return
-                # return False, info
+                return False, info
 
             if not r.ok:
-                # if show_errmsg:
-                #     raise ConnectionError(f'连接状态码：{r.status_code}')
-                set_result(False, 'fail', f'状态码：{r.status_code}')
-                return
+                return False, f'状态码：{r.status_code}'
 
             # -------------------获取文件名-------------------
             file_name = _get_download_file_name(file_url, r)
@@ -251,7 +216,7 @@ class Downloader(object):
             if full_path.exists():
                 if file_exists == 'rename':
                     full_path = get_usable_path(f'{goal}{sep}{full_name}')
-                    full_name = full_path.name
+                    # full_name = full_path.name
 
                 elif file_exists == 'skip':
                     skip = True
@@ -259,20 +224,9 @@ class Downloader(object):
                 elif file_exists == 'overwrite':
                     pass
 
-                else:
-                    raise ValueError("file_exists参数只能是'skip'、'overwrite' 或 'rename'。")
-
-            # -------------------打印要下载的文件-------------------
-            # if show_msg:
-            #     print(file_url)
-            #     print(full_name if file_name == full_name else f'{file_name} -> {full_name}')
-            #     print(f'正在下载到：{goal}')
-            #     if skip:
-            #         print('存在同名文件，已跳过。\n')
-
             # -------------------开始下载-------------------
             if skip:
-                return None, '已跳过，因存在同名文件。'
+                return None, '已跳过'
 
             # 获取远程文件大小
             content_length = r.headers.get('content-length')
@@ -291,18 +245,14 @@ class Downloader(object):
                             if file_size:
                                 downloaded_size += 1024
                                 rate = downloaded_size / file_size if downloaded_size < file_size else 1
-                                # print('\r{:.0%} '.format(rate), end="")
-                                args['state'] = '{:.0%}'.format(rate)
+                                args['info'] = '{:.0%} '.format(rate)
 
             except Exception as e:
-                # if show_errmsg:
-                #     raise ConnectionError(e)
+                # raise
                 download_status, info = False, f'下载失败。\n{e}'
 
             else:
                 if full_path.stat().st_size == 0:
-                    # if show_errmsg:
-                    #     raise ValueError('文件大小为0。')
                     download_status, info = False, '文件大小为0。'
 
                 else:
@@ -314,27 +264,20 @@ class Downloader(object):
                 r.close()
 
             # -------------------显示并返回值-------------------
-            # if show_msg:
-            #     print(info, '\n')
-
-            info = f'{goal}{sep}{full_name}' if download_status else info
+            info = str(full_path.absolute()) if download_status else info
             return download_status, info
 
-        # retry_times = retry
-        # retry_interval = interval or self.retry_interval
         result = do()
 
         if result[0] is False:  # 第一位为None表示跳过的情况
             for i in range(retry_times):
                 sleep(retry_interval)
-                # if show_msg:
-                #     print(f'\n重试 {file_url}')
 
                 result = do()
                 if result[0] is not False:
                     break
 
-        return result
+        set_result(*result)
 
     def _make_response(self,
                        url: str,
@@ -378,9 +321,6 @@ class Downloader(object):
             kwargs['headers'] = session.headers
             kwargs['headers']['Host'] = hostname
             kwargs['headers']['Referer'] = hostname
-
-            # if self.url:
-            #     kwargs['headers']['Referer'] = self.url
 
         if 'timeout' not in kwargs_set:
             kwargs['timeout'] = self.timeout

@@ -4,29 +4,9 @@
 @Contact :   g1879@qq.com
 @File    :   common.py
 """
-from html import unescape
 from pathlib import Path
-from re import split, search, sub
-from shutil import rmtree
+from re import search, sub
 from typing import Union
-from zipfile import ZipFile
-
-
-def clean_folder(folder_path: str, ignore: list = None) -> None:
-    """清空一个文件夹，除了ignore里的文件和文件夹  \n
-    :param folder_path: 要清空的文件夹路径
-    :param ignore: 忽略列表
-    :return: None
-    """
-    ignore = [] if not ignore else ignore
-    p = Path(folder_path)
-
-    for f in p.iterdir():
-        if f.name not in ignore:
-            if f.is_file():
-                f.unlink()
-            elif f.is_dir():
-                rmtree(f, True)
 
 
 def get_usable_path(path: Union[str, Path]) -> Path:
