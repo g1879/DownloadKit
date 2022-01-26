@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse, unquote
 from DrissionPage import Drission
 from DrissionPage.config import SessionOptions
 from requests import Session
+from rich.progress import Progress
 
 from .common import make_valid_name, get_usable_path
 
@@ -71,21 +72,42 @@ class DownloadKit:
 
     def _show(self):
         t1 = perf_counter()
-        while self.is_running() or perf_counter() - t1 < 2:
-            mis = [f"{i['file_url']}\n" for i in self.missions]
-            txt = [f'{k} {v["info"]} {v["data"]["file_url"]}\n' if v is not None else f'{k} None\n' for k, v in self.threads.items()]
-            print(f"{''.join(mis)}\n{''.join(txt)}\n", flush=False)
-            sleep(.5)
-        # print('显示进程停止', flush=False)
+        # while self.is_running() or perf_counter() - t1 < 2:
+        #     mis = [f"{i['file_url']}\n" for i in self.missions]
+        #     txt = [f'{k} {v["info"]} {v["data"]["file_url"]}\n' if v is not None else f'{k} None\n' for k, v in
+        #            self.threads.items()]
+        #     print(f"{''.join(mis)}\n{''.join(txt)}\n", flush=False)
+        #     sleep(.5)
+
+        with Progress() as progress:
+            tasks = {}
+            for k, i in enumerate(self.threads.items()):
+                # print(i)
+                tasks[k] = {
+                    'task': progress.add_task(f'[red]任务{k}', total=100),
+                    # 'url': i[1]['data']['file_url']
+                }
+
+            while self.is_running() or perf_counter() - t1 < 2:
+                for k, i in self.threads.items():
+                    if i is None:
+                        progress.update(k, completed=0)
+
+                    else:
+                        new = self.threads[k]['info'] if self.threads[k] is not None else 0
+                        new = new or 0
+                        progress.update(k, completed=new)
+
+                        sleep(0.02)
 
     def go(self):
         if self.任务管理线程 is None or not self.任务管理线程.is_alive():
-            print('任务线程启动', flush=False)
+            # print('任务线程启动', flush=False)
             self.任务管理线程 = Thread(target=self._missions_manage)
             self.任务管理线程.start()
 
         if self.线程管理线程 is None or not self.线程管理线程.is_alive():
-            print('管理线程启动', flush=False)
+            # print('管理线程启动', flush=False)
             self.线程管理线程 = Thread(target=self._threads_manage)
             self.线程管理线程.start()
 
@@ -126,7 +148,7 @@ class DownloadKit:
                 thread.start()
                 self.threads[num] = msg
 
-        print('任务管理线程停止', flush=False)
+        # print('任务管理线程停止', flush=False)
 
     def _get_usable_thread(self):
         """获取可用线程"""
@@ -148,7 +170,7 @@ class DownloadKit:
             if perf_counter() - t1 > 2 and not self.is_running():
                 break
 
-        print('管理线程停止', flush=False)
+        # print('管理线程停止', flush=False)
 
     def is_running(self):
         """检查是否有线程还在运行中"""
@@ -245,7 +267,8 @@ class DownloadKit:
                             if file_size:
                                 downloaded_size += 1024
                                 rate = downloaded_size / file_size if downloaded_size < file_size else 1
-                                args['info'] = '{:.0%} '.format(rate)
+                                # args['info'] = '{:.0%} '.format(rate)
+                                args['info'] = round(rate, 2) * 100
 
             except Exception as e:
                 # raise
@@ -263,7 +286,7 @@ class DownloadKit:
                     full_path.unlink()  # 删除下载出错文件
                 r.close()
 
-            # -------------------显示并返回值-------------------
+            # -------------------返回结果-------------------
             info = str(full_path.absolute()) if download_status else info
             return download_status, info
 
