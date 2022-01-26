@@ -17,7 +17,7 @@ from rich.progress import Progress
 from .common import make_valid_name, get_usable_path
 
 
-class DownloadKit:
+class DownloadKit(object):
     def __init__(self,
                  goal_path: str = None,
                  size: int = 3,
@@ -36,6 +36,7 @@ class DownloadKit:
         self.interval: int = 5
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
+        self._missions_num = 0
 
         if isinstance(session_or_options, Session):
             self.session = session_or_options
@@ -98,7 +99,7 @@ class DownloadKit:
                         new = new or 0
                         progress.update(k, completed=new)
 
-                        sleep(0.02)
+                    sleep(0.02)
 
     def go(self):
         if self.任务管理线程 is None or not self.任务管理线程.is_alive():
@@ -202,7 +203,7 @@ class DownloadKit:
                 kwargs['timeout'] = 20
 
             # 生成临时的response
-            mode = 'post' if post_data is not None else 'get'
+            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
             r, info = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
             if r is None:
@@ -384,6 +385,18 @@ class DownloadKit:
             # ----------------获取并设置编码结束-----------------
 
             return r, 'Success'
+
+
+class Mission(object):
+    def __init__(self, ID: int, data: dict):
+        self._id = ID
+        self.data = data
+        self.info = None
+        self.result = None
+
+    @property
+    def id(self):
+        return self._id
 
 
 def _get_download_file_name(url, response) -> str:
