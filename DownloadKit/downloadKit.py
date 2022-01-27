@@ -1,9 +1,9 @@
 # -*- coding:utf-8 -*-
-from os import path as os_PATH, sep
+from collections import deque
+from os import path as os_PATH
 from pathlib import Path
 from random import randint
 from re import search, sub
-from collections import deque
 from threading import Thread
 from time import time, sleep, perf_counter
 from typing import Union
@@ -12,7 +12,6 @@ from urllib.parse import quote, urlparse, unquote
 from DrissionPage import Drission
 from DrissionPage.config import SessionOptions
 from requests import Session
-from rich.progress import Progress
 
 from .common import make_valid_name, get_usable_path
 
@@ -25,11 +24,12 @@ class DownloadKit(object):
                  timeout: float = None,
                  file_exists: str = 'rename'):
         self.size = size
-        self.missions = deque()
+        self._missions = {}
+        self.waiting_list = deque()
         self.threads = {i: None for i in range(self._size)}
-        self.任务管理线程 = None
-        self.线程管理线程 = None
-        self.信息显示线程 = None
+        self._mission_thread = None
+        self._manage_thread = None
+        self._info_thread = None
 
         self.goal_path = goal_path
         self.retry: int = 3
@@ -44,8 +44,6 @@ class DownloadKit(object):
             self.session = Drission(driver_or_options=False, session_or_options=session_or_options).session
         else:
             self.session = Drission(driver_or_options=False).session
-
-        self.show()
 
     @property
     def size(self):
@@ -67,50 +65,45 @@ class DownloadKit(object):
         self._file_exists = mode
 
     def show(self):
-        if self.信息显示线程 is None or not self.信息显示线程.is_alive():
-            self.信息显示线程 = Thread(target=self._show)
-            self.信息显示线程.start()
+        if self._info_thread is None or not self._info_thread.is_alive():
+            self._info_thread = Thread(target=self._show)
+            self._info_thread.start()
 
     def _show(self):
         t1 = perf_counter()
-        # while self.is_running() or perf_counter() - t1 < 2:
-        #     mis = [f"{i['file_url']}\n" for i in self.missions]
-        #     txt = [f'{k} {v["info"]} {v["data"]["file_url"]}\n' if v is not None else f'{k} None\n' for k, v in
-        #            self.threads.items()]
-        #     print(f"{''.join(mis)}\n{''.join(txt)}\n", flush=False)
-        #     sleep(.5)
-
-        with Progress() as progress:
-            tasks = {}
-            for k, i in enumerate(self.threads.items()):
-                # print(i)
-                tasks[k] = {
-                    'task': progress.add_task(f'[red]任务{k}', total=100),
-                    # 'url': i[1]['data']['file_url']
-                }
-
-            while self.is_running() or perf_counter() - t1 < 2:
-                for k, i in self.threads.items():
-                    if i is None:
-                        progress.update(k, completed=0)
-
-                    else:
-                        new = self.threads[k]['info'] if self.threads[k] is not None else 0
-                        new = new or 0
-                        progress.update(k, completed=new)
-
-                    sleep(0.02)
+        while self.is_running() or perf_counter() - t1 < 2:
+            txt = [f'线程{k}:{v["mission"].info if v is not None else None}' for k, v in self.threads.items()]
+            print('\r' + '   '.join(txt), end='')
+        # from rich.progress import Progress
+        #
+        # with Progress() as progress:
+        #     for k, i in enumerate(self.threads.items()):
+        #         progress.add_task(f'[red]任务{k}', total=100)
+        #
+        #     while self.is_running() or perf_counter() - t1 < 2:
+        #         for k, i in self.threads.items():
+        #             if i is None:
+        #                 progress.update(k, completed=0)
+        #
+        #             else:
+        #                 new = self.threads[k]['mission'].info if self.threads[k] is not None else 0
+        #                 if isinstance(new, str):
+        #                     continue
+        #                 new = new or 0
+        #                 progress.update(k, completed=new)
+        #
+        #         sleep(0.02)
 
     def go(self):
-        if self.任务管理线程 is None or not self.任务管理线程.is_alive():
+        if self._mission_thread is None or not self._mission_thread.is_alive():
             # print('任务线程启动', flush=False)
-            self.任务管理线程 = Thread(target=self._missions_manage)
-            self.任务管理线程.start()
+            self._mission_thread = Thread(target=self._missions_manage)
+            self._mission_thread.start()
 
-        if self.线程管理线程 is None or not self.线程管理线程.is_alive():
+        if self._manage_thread is None or not self._manage_thread.is_alive():
             # print('管理线程启动', flush=False)
-            self.线程管理线程 = Thread(target=self._threads_manage)
-            self.线程管理线程.start()
+            self._manage_thread = Thread(target=self._threads_manage)
+            self._manage_thread.start()
 
     def add(self,
             file_url: str,
@@ -121,7 +114,7 @@ class DownloadKit(object):
             post_data: Union[str, dict] = None,
             retry: int = None,
             interval: float = None,
-            **kwargs):
+            **kwargs) -> int:
         data = {'file_url': file_url,
                 'goal_path': goal_path or self.goal_path,
                 'session': session or self.session,
@@ -131,20 +124,59 @@ class DownloadKit(object):
                 'retry': retry if retry is not None else self.retry,
                 'interval': interval if interval is not None else self.interval,
                 'kwargs': kwargs}
-        self.missions.append(data)
+        self._missions_num += 1
+        mission = Mission(self._missions_num, data)
+        self._missions[self._missions_num] = mission
+        self.waiting_list.append(mission)
         self.go()
+        return self._missions_num
+
+    def get_mission(self, ID: int) -> 'Mission':
+        return self._missions[ID]
+
+    def wait(self, ID: int, show: bool = True) -> tuple:
+        """等待一个任务完成           \n
+        :param ID: 任务id
+        :param show:
+        :return: 
+        """
+        mission = self.get_mission(ID)
+        if show:
+            print(f'url：{mission.data["file_url"]}')
+            t1 = perf_counter()
+            while mission.file_name is None and perf_counter() - t1 < 4:
+                pass
+            print(f'文件名：{mission.file_name}')
+            print(f'目标路径：{mission.path}')
+
+        while self._missions[ID].state != 'done':
+            if show:
+                info = mission.info
+                if isinstance(info, (float, int)):
+                    print(f'\r{info}% ', end='')
+
+        if show:
+            if mission.result is False:
+                print(f'下载失败 {mission.info}')
+            elif mission.result is True:
+                print('\r100% ', end='')
+                print(f'下载完成 {mission.info}')
+            else:
+                print(f'已跳过 {mission.info}')
+            print()
+
+        return self._missions[ID].result, self._missions[ID].info
 
     def _missions_manage(self):
         t1 = perf_counter()
-        while self.missions or perf_counter() - t1 < 2:
-            if self.missions:
+        while self.waiting_list or perf_counter() - t1 < 2:
+            if self.waiting_list:
                 num = self._get_usable_thread()
                 msg = {'thread': None,
-                       'result': None,
-                       'info': None,
                        'close': False,
-                       'data': self.missions.popleft()}
-                thread = Thread(target=self._download, args=(msg,))
+                       'mission': self.waiting_list.popleft()}
+                msg['mission'].state = 'running'
+                thread = Thread(target=self._download, args=(msg['mission'],))
                 msg['thread'] = thread
                 thread.start()
                 self.threads[num] = msg
@@ -177,24 +209,34 @@ class DownloadKit(object):
         """检查是否有线程还在运行中"""
         return [k for k, v in self.threads.items() if v is not None]
 
-    def _download(self, args: dict):
+    def _download(self, mission: 'Mission'):
         """下载一个文件"""
-        file_url = args['data']['file_url']
-        goal_path = args['data']['goal_path']
-        session = args['data']['session']
-        rename = args['data']['rename']
-        file_exists = args['data']['file_exists']
-        post_data = args['data']['post_data']
-        kwargs = args['data']['kwargs']
-        retry_times = args['data']['retry'] if args['data']['retry'] is not None else self.retry
-        retry_interval = args['data']['interval'] if args['data']['interval'] is not None else self.interval
+        file_url = mission.data['file_url']
+        goal_path = mission.data['goal_path']
+        session = mission.data['session']
+        rename = mission.data['rename']
+        file_exists = mission.data['file_exists']
+        post_data = mission.data['post_data']
+        kwargs = mission.data['kwargs']
+        retry_times = mission.data['retry'] if mission.data['retry'] is not None else self.retry
+        retry_interval = mission.data['interval'] if mission.data['interval'] is not None else self.interval
 
-        def set_result(res, info):
-            args['result'] = res
-            args['info'] = info
+        goal_Path = Path(goal_path)
+        # 按windows规则去除路径中的非法字符
+        goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
+        goal_Path = Path(goal_path).absolute()
+        goal_Path.mkdir(parents=True, exist_ok=True)
+        goal_path = str(goal_Path)
+        mission.path = goal_path
 
-        if file_exists == 'skip' and Path(f'{goal_path}{sep}{rename}').exists():
-            set_result(None, '已跳过')
+        def set_result(res, info, state):
+            mission.result = res
+            mission.info = info
+            mission.state = state
+
+        if file_exists == 'skip' and rename and (goal_Path / rename).exists():
+            mission.file_name = rename
+            set_result(None, '已跳过', 'done')
             return
 
         def do() -> tuple:
@@ -228,18 +270,12 @@ class DownloadKit(object):
             full_name = make_valid_name(full_name)
 
             # -------------------生成路径-------------------
-            goal_Path = Path(goal_path)
             skip = False
-
-            # 按windows规则去除路径中的非法字符
-            goal = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
-            Path(goal).absolute().mkdir(parents=True, exist_ok=True)
-            full_path = Path(f'{goal}{sep}{full_name}')
+            full_path = goal_Path / full_name
 
             if full_path.exists():
                 if file_exists == 'rename':
-                    full_path = get_usable_path(f'{goal}{sep}{full_name}')
-                    # full_name = full_path.name
+                    full_path = get_usable_path(full_path)
 
                 elif file_exists == 'skip':
                     skip = True
@@ -247,9 +283,11 @@ class DownloadKit(object):
                 elif file_exists == 'overwrite':
                     pass
 
+            mission.file_name = full_path.name
+
             # -------------------开始下载-------------------
             if skip:
-                return None, '已跳过'
+                return None, str(full_path)
 
             # 获取远程文件大小
             content_length = r.headers.get('content-length')
@@ -268,8 +306,7 @@ class DownloadKit(object):
                             if file_size:
                                 downloaded_size += 1024
                                 rate = downloaded_size / file_size if downloaded_size < file_size else 1
-                                # args['info'] = '{:.0%} '.format(rate)
-                                args['info'] = round(rate, 2) * 100
+                                mission.info = round(rate * 100, 2)
 
             except Exception as e:
                 # raise
@@ -301,7 +338,7 @@ class DownloadKit(object):
                 if result[0] is not False:
                     break
 
-        set_result(*result)
+        set_result(result[0], result[1], 'done')
 
     def _make_response(self,
                        url: str,
@@ -391,8 +428,15 @@ class Mission(object):
     def __init__(self, ID: int, data: dict):
         self._id = ID
         self.data = data
+        self.state = 'waiting'
         self.info = None
         self.result = None
+
+        self.file_name = None
+        self.path = None
+
+    def __repr__(self) -> str:
+        return f'{self.state} {self.info}'
 
     @property
     def id(self):
