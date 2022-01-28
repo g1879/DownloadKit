@@ -37,13 +37,48 @@ class DownloadKit(object):
         self._info_thread = None
         self._missions_num = 0
 
-        self.goal_path = str(goal_path)
+        self.goal_path = str(goal_path) if isinstance(goal_path, Path) else goal_path
         self.retry: int = 3
         self.interval: int = 5
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
 
         self.session = _get_session(session)
+
+    def __call__(self,
+                 file_url: str,
+                 goal_path: str = None,
+                 session: Session = None,
+                 rename: str = None,
+                 file_exists: str = None,
+                 post_data: Union[str, dict] = None,
+                 show_msg: bool = True,
+                 retry: int = None,
+                 interval: float = None,
+                 **kwargs) -> tuple:
+        """以阻塞的方式下载一个文件并返回结果                                                              \n
+        :param file_url: 文件网址
+        :param goal_path: 保存路径
+        :param session: 用于下载的Session对象，默认使用实例属性的
+        :param rename: 重命名的文件名
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param post_data: post方式使用的数据
+        :param show_msg: 是否打印进度
+        :param retry: 重试次数，默认跟随实例属性
+        :param interval: 重试间隔，默认跟随实例属性
+        :param kwargs: 连接参数
+        :return: 任务结果和信息组成的tuple
+        """
+        mission = self.add(file_url=file_url,
+                           goal_path=goal_path,
+                           session=session,
+                           rename=rename,
+                           file_exists=file_exists,
+                           post_data=post_data,
+                           retry=retry,
+                           interval=interval,
+                           **kwargs)
+        return self.wait(mission, show=show_msg)
 
     @property
     def size(self) -> int:
@@ -52,6 +87,7 @@ class DownloadKit(object):
 
     @property
     def waiting_list(self) -> deque:
+        """返回等待队列"""
         return self._waiting_list
 
     @property
@@ -65,9 +101,9 @@ class DownloadKit(object):
             raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
         self._file_exists = mode
 
-    def is_running(self) -> list:
+    def is_running(self) -> bool:
         """检查是否有线程还在运行中"""
-        return [k for k, v in self._threads.items() if v is not None]
+        return any(self._threads.values())
 
     def add(self,
             file_url: str,
@@ -154,28 +190,24 @@ class DownloadKit(object):
 
     def _show(self) -> None:
         t1 = perf_counter()
+        o = None
         while self.is_running() or perf_counter() - t1 < 2:
-            txt = [f'线程{k}:{v["mission"].info if v is not None else None}' for k, v in self._threads.items()]
-            print('\r' + '   '.join(txt), end='')
-        # from rich.progress import Progress
-        #
-        # with Progress() as progress:
-        #     for k, i in enumerate(self.threads.items()):
-        #         progress.add_task(f'[red]任务{k}', total=100)
-        #
-        #     while self.is_running() or perf_counter() - t1 < 2:
-        #         for k, i in self.threads.items():
-        #             if i is None:
-        #                 progress.update(k, completed=0)
-        #
-        #             else:
-        #                 new = self.threads[k]['mission'].info if self.threads[k] is not None else 0
-        #                 if isinstance(new, str):
-        #                     continue
-        #                 new = new or 0
-        #                 progress.update(k, completed=new)
-        #
-        #         sleep(0.02)
+            if o:
+                print(f'\033[{self.size}A', end='')
+                print(f'\33[K', end='')
+            for k, v in self._threads.items():
+                o = True
+                m = v.get('mission', None) if v else None
+                info, name, path = (m.info, m.file_name, m.path) if m else (None, None, None)
+                info = f'{info}%' if isinstance(info, (int, float)) else info
+                print(f'线程{k}：{info} {name} {path}')
+
+            sleep(0.2)
+
+        print(f'\033[{self.size}A', end='')
+        for i in range(self.size):
+            print(f'\33[K', end='')
+            print(f'线程{i}：None None None')
 
     def _go(self) -> None:
         """运行任务管理线程和线程管理线程"""
@@ -204,16 +236,20 @@ class DownloadKit(object):
                 thread.start()
                 self._threads[num] = msg
 
+            sleep(1)
+
     def _threads_manage(self) -> None:
         """此方法是线程管理方法，用于把完成的线程清除出列表"""
         t1 = perf_counter()
         while True:
             for k, v in self._threads.items():
-                if isinstance(v, dict) and not v['thread'].is_alive():
+                if v is not None and not v['thread'].is_alive():
                     self._threads[k] = None
 
             if perf_counter() - t1 > 2 and not self.is_running():
                 break
+
+            sleep(1)
 
     def _get_usable_thread(self) -> int:
         """获取可用线程"""

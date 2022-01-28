@@ -111,6 +111,7 @@ d = DownloadKit(session=page.drission)
 - file_exists：遇到同名文件时的处理方式，可赋值，可选`'skip'`、`'overwrite'`、`'rename'`
 - session：用于连接的`Session`对象
 - waiting_list：等待下载的队列
+- is_running()：返回是否有线程还在运行
 
 **`file_exists`属性说明：**
 
@@ -230,6 +231,27 @@ url：https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png
 目标路径：D:\files
 100% 下载完成 D:\files\PCfb_5bf082d29588c07f842ccde3f97243ea_4.png
 ```
+
+## 观察下载过程
+
+`show()`方法可实时显示所有线程下载过程，直到所有任务结束，但中途不能退出。
+
+```python
+d = DownloadKit(r'.\files', size=3)
+url = 'https://example.com/file/abc.zip'
+mission = d.add(url1)
+d.wait(mission)
+```
+
+输出：
+
+```shell
+线程0：97.41% abc.zip D:\files
+线程1：None None None
+线程2：None None None
+```
+
+**注意：** 若使用 pyCharm 运行，须在运行配置里勾选“模拟输出控制台中的终端”才能正常显示输出。
 
 ## `Mission`对象
 
