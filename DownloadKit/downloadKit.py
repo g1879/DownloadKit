@@ -115,7 +115,7 @@ class DownloadKit(object):
             retry: int = None,
             interval: float = None,
             **kwargs) -> 'Mission':
-        """添加一个下载任务，返回其id值
+        """添加一个下载任务，返回其id值                                                                 \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param session: 用于下载的Session对象，默认使用实例属性的
@@ -151,7 +151,7 @@ class DownloadKit(object):
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
     def wait(self, mission: Union[int, 'Mission'], show: bool = True) -> tuple:
-        """等待一个任务完成           \n
+        """等待一个任务完成                  \n
         :param mission: 任务对象或任务id
         :param show: 是否显示进度
         :return: 任务结果和信息组成的tuple
@@ -185,6 +185,7 @@ class DownloadKit(object):
         return mission.result, mission.info
 
     def show(self) -> None:
+        """实时显示所有线程进度"""
         if self._info_thread is None or not self._info_thread.is_alive():
             self._info_thread = Thread(target=self._show)
             self._info_thread.start()
