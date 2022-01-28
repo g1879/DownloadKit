@@ -199,7 +199,7 @@ class DownloadKit(object):
                 print(f'\033[K', end='')
             for k, v in self._threads.items():
                 o = True
-                m = v.get['mission'] if v else None
+                m = v['mission'] if v else None
                 rate, name, path = (f'{m.rate}%', m.file_name, m.path) if m else (None, None, None)
                 print(f'线程{k}：{rate} {path}{sep}{name}')
 
