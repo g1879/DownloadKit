@@ -1,6 +1,6 @@
 # -*- coding:utf-8 -*-
 from collections import deque
-from os import path as os_PATH
+from os import path as os_PATH, sep
 from pathlib import Path
 from random import randint
 from re import search, sub
@@ -167,9 +167,9 @@ class DownloadKit(object):
 
         while mission.state != 'done':
             if show:
-                info = mission.info
-                if isinstance(info, (float, int)):
-                    print(f'\r{info}% ', end='')
+                rate = mission.rate
+                if isinstance(rate, (float, int)):
+                    print(f'\r{rate}% ', end='')
             sleep(0.1)
 
         if show:
@@ -195,21 +195,20 @@ class DownloadKit(object):
         o = None
         while self.is_running() or perf_counter() - t1 < 2:
             if o:
-                print(f'\033[{self.size}A', end='')
-                print(f'\33[K', end='')
+                print(f'\033[{self.size}A\r', end='')
+                print(f'\033[K', end='')
             for k, v in self._threads.items():
                 o = True
-                m = v.get('mission', None) if v else None
-                info, name, path = (m.info, m.file_name, m.path) if m else (None, None, None)
-                info = f'{info}%' if isinstance(info, (int, float)) else info
-                print(f'线程{k}：{info} {name} {path}')
+                m = v.get['mission'] if v else None
+                rate, name, path = (f'{m.rate}%', m.file_name, m.path) if m else (None, None, None)
+                print(f'线程{k}：{rate} {path}{sep}{name}')
 
             sleep(0.2)
 
         print(f'\033[{self.size}A', end='')
         for i in range(self.size):
-            print(f'\33[K', end='')
-            print(f'线程{i}：None None None')
+            print(f'\033[K', end='')
+            print(f'线程{i}：None')
 
     def _go(self) -> None:
         """运行任务管理线程和线程管理线程"""
@@ -231,6 +230,7 @@ class DownloadKit(object):
                        'close': False,
                        'mission': self._waiting_list.popleft()}
                 msg['mission'].state = 'running'
+                msg['mission'].info = '下载中'
                 thread = Thread(target=self._download, args=(msg['mission'],))
                 msg['thread'] = thread
                 thread.start()
@@ -359,7 +359,7 @@ class DownloadKit(object):
                             if file_size:
                                 downloaded_size += 1024
                                 rate = downloaded_size / file_size if downloaded_size < file_size else 1
-                                mission.info = round(rate * 100, 2)
+                                mission.rate = round(rate * 100, 2)
 
             except Exception as e:
                 # raise
@@ -488,7 +488,8 @@ class Mission(object):
         self._id = ID
         self.data = data
         self.state = 'waiting'
-        self.info = None
+        self.rate = 0
+        self.info = '等待下载'
         self.result = None
 
         self.file_name = None

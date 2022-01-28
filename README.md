@@ -262,7 +262,8 @@ d.wait(mission)
 - id：任务 id
 - data：任务使用的参数，与`add()`方法参数一致
 - state：任务状态，有`'waiting'`、`'running'`、`'done'`三种
-- info：任务进行中显示进度百分比，任务结束后显示任务信息
+- rate：下载进度（百分比）
+- info：任务信息
 - result：任务结果，`True`表示成功，`False`表示失败，`None`表示跳过
 - file_name：任务文件名
 - path：保存路径
