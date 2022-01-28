@@ -161,7 +161,7 @@ class DownloadKit(object):
             print(f'url：{mission.data["file_url"]}')
             t1 = perf_counter()
             while mission.file_name is None and perf_counter() - t1 < 4:
-                pass
+                sleep(0.01)
             print(f'文件名：{mission.file_name}')
             print(f'目标路径：{mission.path}')
 
@@ -170,6 +170,7 @@ class DownloadKit(object):
                 info = mission.info
                 if isinstance(info, (float, int)):
                     print(f'\r{info}% ', end='')
+            sleep(0.1)
 
         if show:
             if mission.result is False:
@@ -212,12 +213,10 @@ class DownloadKit(object):
     def _go(self) -> None:
         """运行任务管理线程和线程管理线程"""
         if self._mission_thread is None or not self._mission_thread.is_alive():
-            # print('任务线程启动', flush=False)
             self._mission_thread = Thread(target=self._missions_manage)
             self._mission_thread.start()
 
         if self._manage_thread is None or not self._manage_thread.is_alive():
-            # print('管理线程启动', flush=False)
             self._manage_thread = Thread(target=self._threads_manage)
             self._manage_thread.start()
 
@@ -257,6 +256,7 @@ class DownloadKit(object):
             for k, v in self._threads.items():
                 if v is None:
                     return k
+            sleep(1)
 
     def _download(self, mission: 'Mission') -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
