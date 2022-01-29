@@ -226,18 +226,17 @@ class DownloadKit(object):
     def _show(self) -> None:
         """实时显示所有线程进度"""
         t1 = perf_counter()
-        o = None
         while self.is_running() or perf_counter() - t1 < 2:
-            if o:
-                print(f'\033[{self.size}A\r', end='')
-                print(f'\033[K', end='')
+            print(f'\033[K', end='')
+            print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
-                o = True
                 m = v['mission'] if v else None
                 rate, name, path = (f'{m.rate}%', m.file_name, m.path) if m else (None, None, None)
+                print(f'\033[K', end='')
                 print(f'线程{k}：{rate} {path}{sep}{name}')
 
-            sleep(0.2)
+            print(f'\033[{self.size + 1}A\r', end='')
+            sleep(0.4)
 
         print(f'\033[{self.size}A', end='')
         for i in range(self.size):
