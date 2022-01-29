@@ -223,7 +223,7 @@ d.add(url, data=data)
 ```python
 d = DownloadKit(r'.\files')
 url = 'https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png'
-mission = d.add(url1)
+mission = d.add(url)
 d.wait(mission)
 ```
 
@@ -249,16 +249,17 @@ url：https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png
 ```python
 d = DownloadKit(r'.\files', size=3)
 url = 'https://example.com/file/abc.zip'
-mission = d.add(url1)
-d.wait(mission)
+mission = d.add(url)
+d.show()
 ```
 
 输出：
 
 ```shell
-线程0：97.41% abc.zip D:\files
-线程1：None None None
-线程2：None None None
+等待任务数：0
+线程0：97.41% D:\files\abc.zip
+线程1：None None\None
+线程2：None None\None
 ```
 
 **注意：** 若使用 pyCharm 运行，须在运行配置里勾选“模拟输出控制台中的终端”才能正常显示输出。
