@@ -213,7 +213,17 @@ class DownloadKit(object):
                 while self.is_running():
                     sleep(0.1)
 
-    def show(self) -> None:
+    def show(self, asyn: bool = False) -> None:
+        """实时显示所有线程进度             \n
+        :param asyn: 是否以异步方式显示
+        :return: None
+        """
+        if asyn:
+            Thread(target=self._show).start()
+        else:
+            self._show()
+
+    def _show(self) -> None:
         """实时显示所有线程进度"""
         t1 = perf_counter()
         o = None
@@ -233,6 +243,8 @@ class DownloadKit(object):
         for i in range(self.size):
             print(f'\033[K', end='')
             print(f'线程{i}：None')
+
+        print()
 
     def _get_usable_thread(self) -> Union[int, None]:
         """获取可用线程，没有则返回None"""

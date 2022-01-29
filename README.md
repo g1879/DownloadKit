@@ -207,14 +207,18 @@ d.add(url, data=data)
 
 ## 等待任务结束
 
-有时须要等待任务结束，以便获取结果，可用`wait()`方法。
+有时须要等待任务结束，以便获取结果，可用`wait()`方法。  
+当传入任务时，等待该任务结束并返回结果，不传入参数时等待所有任务结束。
 
 参数：
 
-- mission：任务对象或任务 id
+- mission：任务对象或任务`id`，为`None`时等待所有任务结束
 - show：是否显示进度
 
-返回：任务结果和信息组成的两位 tuple。`True`表示成功，`False`表示失败，`None`表示跳过。
+返回：
+
+- 指定任务时，返回任务结果和信息组成的两位 tuple。`True`表示成功，`False`表示失败，`None`表示跳过。
+- 不指定任务时，返回`None`
 
 ```python
 d = DownloadKit(r'.\files')
@@ -234,7 +238,13 @@ url：https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png
 
 ## 观察下载过程
 
-`show()`方法可实时显示所有线程下载过程，直到所有任务结束，但中途不能退出。
+`show()`方法可实时显示所有线程下载过程。
+
+参数：
+
+- asyn：是否异步进行
+
+返回：None
 
 ```python
 d = DownloadKit(r'.\files', size=3)
