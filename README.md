@@ -119,6 +119,29 @@ d = DownloadKit(session=page.drission)
 - `overwrite`：覆盖该文件
 - `rename`：以在后面添加序号的方式给新文件重命名
 
+## 下载设置
+
+可使用以下属性进行配置：
+
+```python
+# 设置线程数，只能在没有任务在运行的时候进行
+page.download.size = 20
+
+# 设置保存路径，设置后每个任务会使用这个路径，也可添加任务时单独设置
+page.download.goal_path = r'D:\tmp'
+
+# 设置重试次数，初始为3
+page.download.retry = 5
+
+# 设置失败重试间隔，初始为5
+page.download.interval = 2
+
+# 设置存在文件名冲突时的处理方式，可选 'skip', 'overwrite', 'rename'
+page.download.file_exists = 'skip'
+```
+
+
+
 ## 添加下载任务
 
 使用`add()`方法添加下载任务。
@@ -205,10 +228,42 @@ d.add(url, data=data)
 
 **Tips：** `json`参数没有显式写在参数里，但直接调用即可。
 
+
+
+## 观察下载过程
+
+`show()`方法可实时显示所有线程下载过程。
+
+**注意：** 若使用 pyCharm 运行，须在运行配置里勾选“模拟输出控制台中的终端”才能正常显示输出。
+
+参数：
+
+- asyn：是否异步进行
+
+返回：None
+
+```python
+d = DownloadKit(r'.\files', size=3)
+url = 'https://example.com/file/abc.zip'
+mission = d.add(url)
+d.show()
+```
+
+输出：
+
+```shell
+等待任务数：0
+线程0：97.41% D:\files\abc.zip
+线程1：None None\None
+线程2：None None\None
+```
+
+
+
 ## 等待任务结束
 
 有时须要等待任务结束，以便获取结果，可用`wait()`方法。  
-当传入任务时，等待该任务结束并返回结果，不传入参数时等待所有任务结束。
+当传入任务时，等待该任务结束并返回结果。不传入参数时等待所有任务结束，与`show()`方法一致。
 
 参数：
 
@@ -236,45 +291,31 @@ url：https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png
 100% 下载完成 D:\files\PCfb_5bf082d29588c07f842ccde3f97243ea_4.png
 ```
 
-## 观察下载过程
 
-`show()`方法可实时显示所有线程下载过程。
 
-参数：
+## 获取某个任务结果
 
-- asyn：是否异步进行
+`Mission`对象用于管理下载任务，可查看该任务执行情况。
 
-返回：None
+`Mission`对象属性：
+
+- id：任务 id
+- file_name：要保存的文件名
+- path：要保存的路径
+- data：任务数据
+- state：任务状态，有`'waiting'`、`'running'`、`'done'`三种
+- rate：任务进度，以百分比显示
+- info：任务信息，成功会返回文件绝对路径，失败会显示原因
+- result：任务结果，`True`表示成功，`False`表示失败，`None`表示跳过
 
 ```python
-d = DownloadKit(r'.\files', size=3)
-url = 'https://example.com/file/abc.zip'
-mission = d.add(url)
-d.show()
+mission = page.download.add(url)
+print(mission.state)
 ```
 
 输出：
 
-```shell
-等待任务数：0
-线程0：97.41% D:\files\abc.zip
-线程1：None None\None
-线程2：None None\None
+```python
+running
 ```
 
-**注意：** 若使用 pyCharm 运行，须在运行配置里勾选“模拟输出控制台中的终端”才能正常显示输出。
-
-## `Mission`对象
-
-`Mission`对象用于管理下载任务。
-
-属性：
-
-- id：任务 id
-- data：任务使用的参数，与`add()`方法参数一致
-- state：任务状态，有`'waiting'`、`'running'`、`'done'`三种
-- rate：下载进度（百分比）
-- info：任务信息
-- result：任务结果，`True`表示成功，`False`表示失败，`None`表示跳过
-- file_name：任务文件名
-- path：保存路径

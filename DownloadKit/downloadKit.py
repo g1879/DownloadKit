@@ -34,13 +34,13 @@ class DownloadKit(object):
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
 
-        self.goal_path = str(goal_path) if isinstance(goal_path, Path) else goal_path
+        self.goal_path = goal_path
         self.retry: int = 3
-        self.interval: int = 5
+        self.interval: float = 5
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
 
-        self.session = _get_session(session)
+        self.session = session
 
     def __call__(self,
                  file_url: str,
@@ -80,6 +80,15 @@ class DownloadKit(object):
         """可同时运行的线程数"""
         return self._size
 
+    @size.setter
+    def size(self, val: int) -> None:
+        """设置size值"""
+        if self.is_running():
+            raise RuntimeError('有任务未完成时不能改变size。')
+        if val != self._size:
+            self._size = val
+            self._threads = {i: None for i in range(self._size)}
+
     @property
     def waiting_list(self) -> Queue:
         """返回等待队列"""
@@ -91,10 +100,49 @@ class DownloadKit(object):
         return self._file_exists
 
     @file_exists.setter
-    def file_exists(self, mode: str):
+    def file_exists(self, mode: str) -> None:
+        """设置处理文件名冲突的方式，可选 'skip', 'overwrite', 'rename'"""
         if mode not in ('skip', 'overwrite', 'rename'):
             raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
         self._file_exists = mode
+
+    @property
+    def goal_path(self) -> Union[str, None]:
+        """返回文件保存路径"""
+        return self._goal_path
+
+    @goal_path.setter
+    def goal_path(self, val: Union[str, Path]) -> None:
+        """设置文件保存路径"""
+        if val is not None and not isinstance(val, (str, Path)):
+            raise TypeError('goal_path只能是str或Path类型。')
+        self._goal_path = str(val) if isinstance(val, Path) else val
+
+    @property
+    def session(self) -> Session:
+        """返回用于连接的Session对象"""
+        return self._session
+
+    @session.setter
+    def session(self, session: Union[Session, 'SessionOptions', 'MixPage', 'Drission']):
+        """设置用于连接的Session对象"""
+        if isinstance(session, Session):
+            self._session = session
+
+        else:
+            try:
+                from DrissionPage import Drission, MixPage
+                from DrissionPage.config import SessionOptions
+
+                if isinstance(session, SessionOptions):
+                    self._session = Drission(driver_or_options=False, session_or_options=session).session
+                elif isinstance(session, (Drission, MixPage)):
+                    self._session = session.session
+                else:
+                    self._session = Drission(driver_or_options=False).session
+
+            except ImportError:
+                self._session = Session()
 
     def is_running(self) -> bool:
         """检查是否有线程还在运行中"""
@@ -532,26 +580,3 @@ def _get_download_file_name(url, response) -> str:
     # 去除非法字符
     charset = charset or 'utf-8'
     return unquote(file_name, charset)
-
-
-def _get_session(session: Union[Session, 'SessionOptions', 'MixPage', 'Drission']) -> Session:
-    """获取Session对象                                      \n
-    :param session: Session对象或包含Session信息的对象
-    :return: Session对象
-    """
-    if not isinstance(session, Session):
-        try:
-            from DrissionPage import Drission, MixPage
-            from DrissionPage.config import SessionOptions
-
-            if isinstance(session, SessionOptions):
-                session = Drission(driver_or_options=False, session_or_options=session).session
-            elif isinstance(session, (Drission, MixPage)):
-                session = session.session
-            else:
-                session = Drission(driver_or_options=False).session
-
-        except ImportError:
-            session = Session()
-
-    return session
