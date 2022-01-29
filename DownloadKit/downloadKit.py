@@ -45,7 +45,6 @@ class DownloadKit(object):
     def __call__(self,
                  file_url: str,
                  goal_path: str = None,
-                 session: Session = None,
                  rename: str = None,
                  file_exists: str = None,
                  post_data: Union[str, dict] = None,
@@ -53,7 +52,7 @@ class DownloadKit(object):
                  retry: int = None,
                  interval: float = None,
                  **kwargs) -> tuple:
-        """以阻塞的方式下载一个文件并返回结果                                                              \n
+        """以阻塞的方式下载一个文件并返回结果，主要用于兼容旧版DrissionPage                                     \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param session: 用于下载的Session对象，默认使用实例属性的
@@ -68,7 +67,6 @@ class DownloadKit(object):
         """
         mission = self.add(file_url=file_url,
                            goal_path=goal_path,
-                           session=session,
                            rename=rename,
                            file_exists=file_exists,
                            post_data=post_data,
