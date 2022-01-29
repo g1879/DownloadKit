@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
-from collections import deque
 from os import path as os_PATH, sep
 from pathlib import Path
+from queue import Queue
 from random import randint
 from re import search, sub
 from threading import Thread
@@ -30,11 +30,8 @@ class DownloadKit(object):
         """
         self._size = size
         self._missions = {}
-        self._waiting_list: deque = deque()
         self._threads = {i: None for i in range(self._size)}
-        self._mission_thread = None
-        self._manage_thread = None
-        self._info_thread = None
+        self._waiting_list: Queue = Queue()
         self._missions_num = 0
 
         self.goal_path = str(goal_path) if isinstance(goal_path, Path) else goal_path
@@ -86,7 +83,7 @@ class DownloadKit(object):
         return self._size
 
     @property
-    def waiting_list(self) -> deque:
+    def waiting_list(self) -> Queue:
         """返回等待队列"""
         return self._waiting_list
 
@@ -115,7 +112,7 @@ class DownloadKit(object):
             retry: int = None,
             interval: float = None,
             **kwargs) -> 'Mission':
-        """添加一个下载任务，返回其id值                                                                 \n
+        """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param session: 用于下载的Session对象，默认使用实例属性的
@@ -139,9 +136,33 @@ class DownloadKit(object):
         self._missions_num += 1
         mission = Mission(self._missions_num, data)
         self._missions[self._missions_num] = mission
-        self._waiting_list.append(mission)
-        self._go()
+
+        thread_id = self._get_usable_thread()
+        if thread_id is not None:
+            thread = DownloadThread(target=self._run, args=(thread_id, mission))
+            self._threads[thread_id] = {'thread': thread, 'mission': None}
+            thread.start()
+        else:
+            self._waiting_list.put(mission)
+
         return mission
+
+    def _run(self, ID: int, mission: 'Mission'):
+        while True:
+            if not mission:
+                if not self._waiting_list.empty():
+                    mission = self._waiting_list.get()
+                else:
+                    break
+
+            mission.info = '下载中'
+            mission.state = 'running'
+            self._threads[ID]['mission'] = mission
+            self._download(mission)
+            mission.state = 'done'
+            mission = None
+
+        self._threads[ID] = None
 
     def get_mission(self, mission_or_id: Union[int, 'Mission']) -> 'Mission':
         """根据id值获取一个任务                 \n
@@ -150,47 +171,50 @@ class DownloadKit(object):
         """
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
-    def wait(self, mission: Union[int, 'Mission'], show: bool = True) -> tuple:
-        """等待一个任务完成                  \n
-        :param mission: 任务对象或任务id
+    def wait(self, mission: Union[int, 'Mission'] = None, show: bool = True) -> Union[tuple, None]:
+        """等待所有或指定任务完成                                    \n
+        :param mission: 任务对象或任务id，为None时等待所有任务结束
         :param show: 是否显示进度
         :return: 任务结果和信息组成的tuple
         """
-        mission = self.get_mission(mission)
-        if show:
-            print(f'url：{mission.data["file_url"]}')
-            t1 = perf_counter()
-            while mission.file_name is None and perf_counter() - t1 < 4:
-                sleep(0.01)
-            print(f'文件名：{mission.file_name}')
-            print(f'目标路径：{mission.path}')
-
-        while mission.state != 'done':
+        if mission:
+            mission = self.get_mission(mission)
             if show:
-                rate = mission.rate
-                if isinstance(rate, (float, int)):
-                    print(f'\r{rate}% ', end='')
-            sleep(0.1)
+                print(f'url：{mission.data["file_url"]}')
+                t1 = perf_counter()
+                while mission.file_name is None and perf_counter() - t1 < 4:
+                    sleep(0.01)
+                print(f'文件名：{mission.file_name}')
+                print(f'目标路径：{mission.path}')
 
-        if show:
-            if mission.result is False:
-                print(f'下载失败 {mission.info}')
-            elif mission.result is True:
-                print('\r100% ', end='')
-                print(f'下载完成 {mission.info}')
+            while mission.state != 'done':
+                if show:
+                    rate = mission.rate
+                    if isinstance(rate, (float, int)):
+                        print(f'\r{rate}% ', end='')
+                sleep(0.1)
+
+            if show:
+                if mission.result is False:
+                    print(f'下载失败 {mission.info}')
+                elif mission.result is True:
+                    print('\r100% ', end='')
+                    print(f'下载完成 {mission.info}')
+                else:
+                    print(f'已跳过 {mission.info}')
+                print()
+
+            return mission.result, mission.info
+
+        else:
+            if show:
+                self.show()
             else:
-                print(f'已跳过 {mission.info}')
-            print()
-
-        return mission.result, mission.info
+                while self.is_running():
+                    sleep(0.1)
 
     def show(self) -> None:
         """实时显示所有线程进度"""
-        if self._info_thread is None or not self._info_thread.is_alive():
-            self._info_thread = Thread(target=self._show)
-            self._info_thread.start()
-
-    def _show(self) -> None:
         t1 = perf_counter()
         o = None
         while self.is_running() or perf_counter() - t1 < 2:
@@ -210,54 +234,11 @@ class DownloadKit(object):
             print(f'\033[K', end='')
             print(f'线程{i}：None')
 
-    def _go(self) -> None:
-        """运行任务管理线程和线程管理线程"""
-        if self._mission_thread is None or not self._mission_thread.is_alive():
-            self._mission_thread = Thread(target=self._missions_manage)
-            self._mission_thread.start()
-
-        if self._manage_thread is None or not self._manage_thread.is_alive():
-            self._manage_thread = Thread(target=self._threads_manage)
-            self._manage_thread.start()
-
-    def _missions_manage(self) -> None:
-        """此方法是任务管理线程方法，用于把任务添加到空闲线程"""
-        t1 = perf_counter()
-        while self._waiting_list or perf_counter() - t1 < 2:
-            if self._waiting_list:
-                num = self._get_usable_thread()
-                msg = {'thread': None,
-                       'close': False,
-                       'mission': self._waiting_list.popleft()}
-                msg['mission'].state = 'running'
-                msg['mission'].info = '下载中'
-                thread = Thread(target=self._download, args=(msg['mission'],))
-                msg['thread'] = thread
-                thread.start()
-                self._threads[num] = msg
-
-            sleep(1)
-
-    def _threads_manage(self) -> None:
-        """此方法是线程管理方法，用于把完成的线程清除出列表"""
-        t1 = perf_counter()
-        while True:
-            for k, v in self._threads.items():
-                if v is not None and not v['thread'].is_alive():
-                    self._threads[k] = None
-
-            if perf_counter() - t1 > 2 and not self.is_running():
-                break
-
-            sleep(1)
-
-    def _get_usable_thread(self) -> int:
-        """获取可用线程"""
-        while True:
-            for k, v in self._threads.items():
-                if v is None:
-                    return k
-            sleep(1)
+    def _get_usable_thread(self) -> Union[int, None]:
+        """获取可用线程，没有则返回None"""
+        for k, v in self._threads.items():
+            if v is None:
+                return k
 
     def _download(self, mission: 'Mission') -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
@@ -282,14 +263,13 @@ class DownloadKit(object):
         goal_path = str(goal_Path)
         mission.path = goal_path
 
-        def set_result(res, info, state):
+        def set_result(res, info):
             mission.result = res
             mission.info = info
-            mission.state = state
 
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
-            set_result(None, '已跳过', 'done')
+            set_result(None, '已跳过')
             return
 
         def do() -> tuple:
@@ -362,7 +342,6 @@ class DownloadKit(object):
                                 mission.rate = round(rate * 100, 2)
 
             except Exception as e:
-                # raise
                 download_status, info = False, f'下载失败。\n{e}'
 
             else:
@@ -391,7 +370,7 @@ class DownloadKit(object):
                 if result[0] is not False:
                     break
 
-        set_result(result[0], result[1], 'done')
+        set_result(*result)
 
     def _make_response(self,
                        url: str,
@@ -503,6 +482,16 @@ class Mission(object):
         return self._id
 
 
+class DownloadThread(Thread):
+    @property
+    def mission(self) -> Mission:
+        return self.mission
+
+    @mission.setter
+    def mission(self, mission: Mission):
+        self.mission = mission
+
+
 def _get_download_file_name(url, response) -> str:
     """从headers或url中获取文件名，如果获取不到，生成一个随机文件名
     :param url: 文件url
@@ -546,9 +535,9 @@ def _get_download_file_name(url, response) -> str:
     return unquote(file_name, charset)
 
 
-def _get_session(session):
-    """
-    :param session: Union[Session, 'SessionOptions', 'MixPage', 'Drission']
+def _get_session(session: Union[Session, 'SessionOptions', 'MixPage', 'Drission']) -> Session:
+    """获取Session对象                                      \n
+    :param session: Session对象或包含Session信息的对象
     :return: Session对象
     """
     if not isinstance(session, Session):
