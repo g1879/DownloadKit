@@ -139,7 +139,7 @@ class DownloadKit(object):
 
         thread_id = self._get_usable_thread()
         if thread_id is not None:
-            thread = DownloadThread(target=self._run, args=(thread_id, mission))
+            thread = Thread(target=self._run, args=(thread_id, mission))
             self._threads[thread_id] = {'thread': thread, 'mission': None}
             thread.start()
         else:
@@ -480,16 +480,6 @@ class Mission(object):
     @property
     def id(self) -> int:
         return self._id
-
-
-class DownloadThread(Thread):
-    @property
-    def mission(self) -> Mission:
-        return self.mission
-
-    @mission.setter
-    def mission(self, mission: Mission):
-        self.mission = mission
 
 
 def _get_download_file_name(url, response) -> str:
