@@ -224,14 +224,14 @@ class DownloadKit(object):
         :return: None
         """
         if asyn:
-            Thread(target=self._show).start()
+            Thread(target=self._show, args=(2,)).start()
         else:
-            self._show()
+            self._show(0.1)
 
-    def _show(self) -> None:
+    def _show(self, wait: float) -> None:
         """实时显示所有线程进度"""
         t1 = perf_counter()
-        while self.is_running() or perf_counter() - t1 < 2:
+        while self.is_running() or perf_counter() - t1 < wait:
             print(f'\033[K', end='')
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
