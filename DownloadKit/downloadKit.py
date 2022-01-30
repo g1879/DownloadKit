@@ -1,4 +1,9 @@
 # -*- coding:utf-8 -*-
+"""
+@Author  :   g1879
+@Contact :   g1879@qq.com
+@File    :   downloadKit.py
+"""
 from os import path as os_PATH, sep
 from pathlib import Path
 from queue import Queue
@@ -11,10 +16,14 @@ from urllib.parse import quote, urlparse, unquote
 
 from requests import Session
 
-from .common import make_valid_name, get_usable_path
+from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter
 
 
 class DownloadKit(object):
+    session = SessionSetter()
+    file_exists = FileExistsSetter()
+    goal_path = PathSetter()
+
     def __init__(self,
                  goal_path: Union[str, Path] = None,
                  size: int = 10,
@@ -94,56 +103,6 @@ class DownloadKit(object):
         """返回等待队列"""
         return self._waiting_list
 
-    @property
-    def file_exists(self) -> str:
-        """此属性表示在遇到目标目录有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'"""
-        return self._file_exists
-
-    @file_exists.setter
-    def file_exists(self, mode: str) -> None:
-        """设置处理文件名冲突的方式，可选 'skip', 'overwrite', 'rename'"""
-        if mode not in ('skip', 'overwrite', 'rename'):
-            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
-        self._file_exists = mode
-
-    @property
-    def goal_path(self) -> Union[str, None]:
-        """返回文件保存路径"""
-        return self._goal_path
-
-    @goal_path.setter
-    def goal_path(self, val: Union[str, Path]) -> None:
-        """设置文件保存路径"""
-        if val is not None and not isinstance(val, (str, Path)):
-            raise TypeError('goal_path只能是str或Path类型。')
-        self._goal_path = str(val) if isinstance(val, Path) else val
-
-    @property
-    def session(self) -> Session:
-        """返回用于连接的Session对象"""
-        return self._session
-
-    @session.setter
-    def session(self, session: Union[Session, 'SessionOptions', 'MixPage', 'Drission']):
-        """设置用于连接的Session对象"""
-        if isinstance(session, Session):
-            self._session = session
-
-        else:
-            try:
-                from DrissionPage import Drission, MixPage
-                from DrissionPage.config import SessionOptions
-
-                if isinstance(session, SessionOptions):
-                    self._session = Drission(driver_or_options=False, session_or_options=session).session
-                elif isinstance(session, (Drission, MixPage)):
-                    self._session = session.session
-                else:
-                    self._session = Drission(driver_or_options=False).session
-
-            except ImportError:
-                self._session = Session()
-
     def is_running(self) -> bool:
         """检查是否有线程还在运行中"""
         return any(self._threads.values())
@@ -180,7 +139,7 @@ class DownloadKit(object):
                 'interval': interval if interval is not None else self.interval,
                 'kwargs': kwargs}
         self._missions_num += 1
-        mission = Mission(self._missions_num, data)
+        mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
 
         thread_id = self._get_usable_thread()
@@ -254,12 +213,12 @@ class DownloadKit(object):
 
         else:
             if show:
-                self.show()
+                self.show(False)
             else:
                 while self.is_running():
                     sleep(0.1)
 
-    def show(self, asyn: bool = False) -> None:
+    def show(self, asyn: bool = True) -> None:
         """实时显示所有线程进度             \n
         :param asyn: 是否以异步方式显示
         :return: None
@@ -277,17 +236,17 @@ class DownloadKit(object):
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
-                rate, name, path = (f'{m.rate}%', m.file_name, m.path) if m else (None, None, None)
+                rate, path = (f'{m.rate}%', f'{m.path}{sep}{m.file_name}') if m else ('空闲', '')
                 print(f'\033[K', end='')
-                print(f'线程{k}：{rate} {path}{sep}{name}')
+                print(f'线程{k}：{rate} {path}')
 
             print(f'\033[{self.size + 1}A\r', end='')
             sleep(0.4)
 
-        print(f'\033[{self.size}A', end='')
+        print(f'\033[1B', end='')
         for i in range(self.size):
             print(f'\033[K', end='')
-            print(f'线程{i}：None')
+            print(f'线程{i}：空闲')
 
         print()
 
@@ -516,10 +475,11 @@ class DownloadKit(object):
 class Mission(object):
     """任务对象"""
 
-    def __init__(self, ID: int, data: dict):
-        """初始化
+    def __init__(self, ID: int, data: dict, download_kit: DownloadKit):
+        """初始化                               \n
         :param ID: 任务id
         :param data: 任务数据
+        :param download_kit: 所属下载器
         """
         self._id = ID
         self.data = data
@@ -530,6 +490,7 @@ class Mission(object):
 
         self.file_name = None
         self.path = None
+        self.download_kit = download_kit
 
     def __repr__(self) -> str:
         return f'{self.state} {self.info}'
@@ -537,6 +498,13 @@ class Mission(object):
     @property
     def id(self) -> int:
         return self._id
+
+    def wait(self, show: bool = True) -> tuple:
+        """等待当前任务完成                  \n
+        :param show: 是否显示下载进度
+        :return: 任务结果和信息组成的tuple
+        """
+        return self.download_kit.wait(self, show)
 
 
 def _get_download_file_name(url, response) -> str:

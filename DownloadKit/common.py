@@ -8,6 +8,52 @@ from pathlib import Path
 from re import search, sub
 from typing import Union
 
+from requests import Session
+
+
+class PathSetter(object):
+    def __set__(self, goal_path, val):
+        if val is not None and not isinstance(val, (str, Path)):
+            raise TypeError('goal_path只能是str或Path类型。')
+        goal_path._goal_path = str(val) if isinstance(val, Path) else val
+
+    def __get__(self, goal_path, objtype=None):
+        return goal_path._goal_path
+
+
+class SessionSetter(object):
+    def __set__(self, session, value):
+        if isinstance(value, Session):
+            session._session = value
+
+        else:
+            try:
+                from DrissionPage import Drission, MixPage
+                from DrissionPage.config import SessionOptions
+
+                if isinstance(value, SessionOptions):
+                    session._session = Drission(driver_or_options=False, session_or_options=value).session
+                elif isinstance(value, (Drission, MixPage)):
+                    session._session = value.session
+                else:
+                    session._session = Drission(driver_or_options=False).session
+
+            except ImportError:
+                session._session = Session()
+
+    def __get__(self, session, objtype=None):
+        return session._session
+
+
+class FileExistsSetter(object):
+    def __set__(self, file_exists, mode):
+        if mode not in ('skip', 'overwrite', 'rename'):
+            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
+        file_exists._file_exists = mode
+
+    def __get__(self, file_exists, objtype=None):
+        return file_exists._file_exists
+
 
 def get_usable_path(path: Union[str, Path]) -> Path:
     """检查文件或文件夹是否有重名，并返回可以使用的路径           \n

@@ -262,7 +262,7 @@ d.show()
 
 ## 等待任务结束
 
-有时须要等待任务结束，以便获取结果，可用`wait()`方法。  
+有时须要等待任务结束，以便获取结果，可用`DownloadKit`对象的`wait()`方法。  
 当传入任务时，等待该任务结束并返回结果。不传入参数时等待所有任务结束，与`show()`方法一致。
 
 参数：
@@ -291,7 +291,12 @@ url：https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png
 100% 下载完成 D:\files\PCfb_5bf082d29588c07f842ccde3f97243ea_4.png
 ```
 
+**Tips：** `Mission`对象也有`wait()`方法，作用与上述的一致。
 
+```python
+mission = d.add(url)
+mission.wait()
+```
 
 ## 获取某个任务结果
 
@@ -318,4 +323,3 @@ print(mission.state)
 ```python
 running
 ```
-
