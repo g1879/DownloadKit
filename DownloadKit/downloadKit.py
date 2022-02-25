@@ -43,7 +43,7 @@ class DownloadKit(object):
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
 
-        self.goal_path = goal_path
+        self.goal_path = str(goal_path)
         self.retry: int = 3
         self.interval: float = 5
         self.timeout: float = timeout if timeout is not None else 20
@@ -53,7 +53,7 @@ class DownloadKit(object):
 
     def __call__(self,
                  file_url: str,
-                 goal_path: str = None,
+                 goal_path: Union[str, Path] = None,
                  rename: str = None,
                  file_exists: str = None,
                  post_data: Union[str, dict] = None,
@@ -109,7 +109,7 @@ class DownloadKit(object):
 
     def add(self,
             file_url: str,
-            goal_path: str = None,
+            goal_path: Union[str, Path] = None,
             session: Session = None,
             rename: str = None,
             file_exists: str = None,
@@ -130,7 +130,7 @@ class DownloadKit(object):
         :return: 任务对象
         """
         data = {'file_url': file_url,
-                'goal_path': goal_path or self.goal_path or '.',
+                'goal_path': str(goal_path or self.goal_path or '.'),
                 'session': session or self.session,
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
