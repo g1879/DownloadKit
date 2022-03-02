@@ -61,8 +61,6 @@ class DownloadKit(object):
                  file_exists: str = None,
                  post_data: Union[str, dict] = None,
                  show_msg: bool = True,
-                 retry: int = None,
-                 interval: float = None,
                  **kwargs) -> tuple:
         """以阻塞的方式下载一个文件并返回结果，主要用于兼容旧版DrissionPage                                     \n
         :param file_url: 文件网址
@@ -72,8 +70,6 @@ class DownloadKit(object):
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
         :param show_msg: 是否打印进度
-        :param retry: 重试次数，默认跟随实例属性
-        :param interval: 重试间隔，默认跟随实例属性
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
         """
@@ -82,8 +78,6 @@ class DownloadKit(object):
                            rename=rename,
                            file_exists=file_exists,
                            post_data=post_data,
-                           retry=retry,
-                           interval=interval,
                            **kwargs)
         return self.wait(mission, show=show_msg)
 
@@ -117,8 +111,6 @@ class DownloadKit(object):
             rename: str = None,
             file_exists: str = None,
             post_data: Union[str, dict] = None,
-            retry: int = None,
-            interval: float = None,
             **kwargs) -> 'Mission':
         """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
@@ -138,8 +130,6 @@ class DownloadKit(object):
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
                 'post_data': post_data,
-                'retry': retry if retry is not None else self.retry,
-                'interval': interval if interval is not None else self.interval,
                 'kwargs': kwargs}
         self._missions_num += 1
         mission = Mission(self._missions_num, data, self)
@@ -211,9 +201,8 @@ class DownloadKit(object):
 
             while mission.state != 'done':
                 if show:
-                    rate = mission.rate
-                    if isinstance(rate, (float, int)):
-                        print(f'\r{rate}% ', end='')
+                    end = '% ' if isinstance(mission.rate, (float, int)) else ' '
+                    print(f'\r{mission.rate}', end=end)
                 sleep(0.1)
 
             if show:
@@ -291,8 +280,6 @@ class DownloadKit(object):
         file_exists = mission.data['file_exists']
         post_data = mission.data['post_data']
         kwargs = mission.data['kwargs']
-        retry_times = mission.data['retry'] if mission.data['retry'] is not None else self.retry
-        retry_interval = mission.data['interval'] if mission.data['interval'] is not None else self.interval
 
         goal_Path = Path(goal_path)
         # 按windows规则去除路径中的非法字符
@@ -379,6 +366,8 @@ class DownloadKit(object):
                                 downloaded_size += 1024
                                 rate = downloaded_size / file_size if downloaded_size < file_size else 1
                                 mission.rate = round(rate * 100, 2)
+                            else:
+                                mission.rate = '未知大小'
 
             except Exception as e:
                 download_status, info = False, f'下载失败。\n{e}'
@@ -401,13 +390,13 @@ class DownloadKit(object):
 
         result = do()
 
-        if result[0] is False:  # 第一位为None表示跳过的情况
-            for i in range(retry_times):
-                sleep(retry_interval)
-
-                result = do()
-                if result[0] is not False:
-                    break
+        # if result[0] is False:  # 第一位为None表示跳过的情况
+        #     for i in range(retry_times):
+        #         sleep(retry_interval)
+        #
+        #         result = do()
+        #         if result[0] is not False:
+        #             break
 
         set_result(*result)
 
@@ -429,8 +418,8 @@ class DownloadKit(object):
                 raise ValueError('URL为空。')
             return None, 'URL为空。'
 
-        if mode not in ('get', 'post'):
-            raise ValueError("mode参数只能是'get'或'post'。")
+        if mode not in ('get', 'post', 'head'):
+            raise ValueError("mode参数只能是'get'、'post' 或 'head'。")
 
         url = quote(url, safe='/:&?=%;#@+!')
 
@@ -455,42 +444,28 @@ class DownloadKit(object):
         if 'timeout' not in kwargs_set:
             kwargs['timeout'] = self.timeout
 
-        try:
-            r = None
+        r = e = None
+        for i in range(self.retry + 1):
+            try:
+                if mode == 'get':
+                    r = session.get(url, **kwargs)
+                elif mode == 'post':
+                    r = session.post(url, data=data, **kwargs)
+                elif mode == 'head':
+                    r = session.head(url, **kwargs)
 
-            if mode == 'get':
-                r = session.get(url, **kwargs)
-            elif mode == 'post':
-                r = session.post(url, data=data, **kwargs)
+                if r:
+                    e = 'Success'
+                    break
 
-        except Exception as e:
-            if self.show_errmsg:
-                raise e
+            except Exception as e:
+                if self.show_errmsg:
+                    raise e
 
-            return None, e
+            if i < self.retry:
+                sleep(self.interval)
 
-        else:
-            # ----------------获取并设置编码开始-----------------
-            # 在headers中获取编码
-            content_type = r.headers.get('content-type', '').lower()
-            charset = search(r'charset[=: ]*(.*)?[;]', content_type)
-
-            if charset:
-                r.encoding = charset.group(1)
-
-            # 在headers中获取不到编码，且如果是网页
-            elif content_type.replace(' ', '').startswith('text/html'):
-                re_result = search(b'<meta.*?charset=[ \\\'"]*([^"\\\' />]+).*?>', r.content)
-
-                if re_result:
-                    charset = re_result.group(1).decode()
-                else:
-                    charset = r.apparent_encoding
-
-                r.encoding = charset
-            # ----------------获取并设置编码结束-----------------
-
-            return r, 'Success'
+        return _set_charset(r), e
 
     def _stop_show(self):
         input()
@@ -573,3 +548,28 @@ def _get_download_file_name(url, response) -> str:
     # 去除非法字符
     charset = charset or 'utf-8'
     return unquote(file_name, charset)
+
+
+def _set_charset(response):
+    if response is None:
+        return
+
+    # 在headers中获取编码
+    content_type = response.headers.get('content-type', '').lower()
+    charset = search(r'charset[=: ]*(.*)?[;]', content_type)
+
+    if charset:
+        response.encoding = charset.group(1)
+
+    # 在headers中获取不到编码，且如果是网页
+    elif content_type.replace(' ', '').startswith('text/html'):
+        re_result = search(b'<meta.*?charset=[ \\\'"]*([^"\\\' />]+).*?>', response.content)
+
+        if re_result:
+            charset = re_result.group(1).decode()
+        else:
+            charset = response.apparent_encoding
+
+        response.encoding = charset
+
+    return response
