@@ -15,6 +15,7 @@ from typing import Union
 from urllib.parse import quote, urlparse, unquote
 
 from requests import Session
+from DataRecorder import Recorder
 
 from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter
 
@@ -42,12 +43,14 @@ class DownloadKit(object):
         self._threads = {i: None for i in range(self._size)}
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
+        self._stop_printing = False
 
         self.goal_path = str(goal_path)
         self.retry: int = 3
         self.interval: float = 5
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
+        self.show_errmsg = False
 
         self.session = session
 
@@ -176,6 +179,20 @@ class DownloadKit(object):
         """
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
+    def get_failed_missions(self, save_to: Union[str, Path] = None) -> list:
+        lst = [i for i in self._missions.values() if i.result is False]
+        if save_to:
+            lst = [{'url': i.data['file_url'],
+                    'path': i.data['goal_path'],
+                    'rename': i.data['rename'],
+                    'post_data': i.data['post_data'],
+                    'kwargs': i.data['kwargs']}
+                   for i in lst]
+            r = Recorder(save_to, cache_size=0)
+            r.add_data(lst)
+            r.record()
+        return lst
+
     def wait(self, mission: Union[int, 'Mission'] = None, show: bool = True) -> Union[tuple, None]:
         """等待所有或指定任务完成                                    \n
         :param mission: 任务对象或任务id，为None时等待所有任务结束
@@ -218,20 +235,26 @@ class DownloadKit(object):
                 while self.is_running():
                     sleep(0.1)
 
-    def show(self, asyn: bool = True) -> None:
-        """实时显示所有线程进度             \n
+    def show(self, asyn: bool = True, keep: bool = False) -> None:
+        """实时显示所有线程进度                 \n
         :param asyn: 是否以异步方式显示
+        :param keep: 任务列表为空时是否保持显示
         :return: None
         """
         if asyn:
-            Thread(target=self._show, args=(2,)).start()
+            Thread(target=self._show, args=(2, keep)).start()
         else:
-            self._show(0.1)
+            self._show(0.1, keep)
 
-    def _show(self, wait: float) -> None:
+    def _show(self, wait: float, keep: bool = False) -> None:
         """实时显示所有线程进度"""
+        self._stop_printing = False
+
+        if keep:
+            Thread(target=self._stop_show).start()
+
         t1 = perf_counter()
-        while self.is_running() or perf_counter() - t1 < wait:
+        while not self._stop_printing and (keep or self.is_running() or perf_counter() - t1 < wait):
             print(f'\033[K', end='')
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
@@ -393,18 +416,16 @@ class DownloadKit(object):
                        session: Session,
                        mode: str = 'get',
                        data: Union[dict, str] = None,
-                       show_errmsg: bool = False,
                        **kwargs) -> tuple:
         """生成response对象                                                   \n
         :param url: 目标url
         :param mode: 'get', 'post' 中选择
         :param data: post方式要提交的数据
-        :param show_errmsg: 是否显示和抛出异常
         :param kwargs: 连接参数
         :return: tuple，第一位为Response或None，第二位为出错信息或'Success'
         """
         if not url:
-            if show_errmsg:
+            if self.show_errmsg:
                 raise ValueError('URL为空。')
             return None, 'URL为空。'
 
@@ -443,7 +464,7 @@ class DownloadKit(object):
                 r = session.post(url, data=data, **kwargs)
 
         except Exception as e:
-            if show_errmsg:
+            if self.show_errmsg:
                 raise e
 
             return None, e
@@ -471,6 +492,10 @@ class DownloadKit(object):
 
             return r, 'Success'
 
+    def _stop_show(self):
+        input()
+        self._stop_printing = True
+
 
 class Mission(object):
     """任务对象"""
@@ -493,7 +518,7 @@ class Mission(object):
         self.download_kit = download_kit
 
     def __repr__(self) -> str:
-        return f'{self.state} {self.info}'
+        return f'<Mission {self.state} {self.info}>'
 
     @property
     def id(self) -> int:
