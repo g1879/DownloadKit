@@ -51,6 +51,7 @@ class DownloadKit(object):
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
         self.show_errmsg = False
+        # self.split_size = 20480  # 分块大小（20M）
 
         self.session = session
 
@@ -298,65 +299,33 @@ class DownloadKit(object):
             set_result(None, '已跳过')
             return
 
+        mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
+        r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+
+        # -------------------获取文件信息-------------------
+        file_info = self._get_file_info(r, goal_path, rename, file_exists)
+        file_size = file_info['size']
+        full_path = file_info['path']
+        mission.file_name = full_path.name
+
+        if file_info['skip']:
+            set_result(None, '已跳过')
+            return
+
+        if not r:
+            set_result(False, inf)
+            return
+
+        # -------------------设置分块-------------------
+        # if file_size and file_size > self.split_size:
+        #     pass
+
         def do() -> tuple:
-            kwargs['stream'] = True
-            if 'timeout' not in kwargs:
-                kwargs['timeout'] = 20
-
-            # 生成临时的response
-            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            r, info = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
-
-            if r is None:
-                return False, info
-
-            if not r.ok:
-                return False, f'状态码：{r.status_code}'
-
-            # -------------------获取文件名-------------------
-            file_name = _get_download_file_name(file_url, r)
-
-            # -------------------重命名，不改变扩展名-------------------
-            if rename:
-                ext_name = file_name.split('.')[-1]
-                if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
-                    full_name = rename
-                else:
-                    full_name = f'{rename}.{ext_name}'
-            else:
-                full_name = file_name
-
-            full_name = make_valid_name(full_name)
-
-            # -------------------生成路径-------------------
-            skip = False
-            full_path = goal_Path / full_name
-
-            if full_path.exists():
-                if file_exists == 'rename':
-                    full_path = get_usable_path(full_path)
-
-                elif file_exists == 'skip':
-                    skip = True
-
-                elif file_exists == 'overwrite':
-                    pass
-
-            mission.file_name = full_path.name
-
             # -------------------开始下载-------------------
-            if skip:
-                return None, str(full_path)
-
-            # 获取远程文件大小
-            content_length = r.headers.get('content-length')
-            file_size = int(content_length) if content_length else None
-
             # 已下载文件大小和下载状态
             downloaded_size, download_status = 0, False
-
             try:
-                with open(str(full_path), 'wb') as tmpFile:
+                with open(full_path, 'wb') as tmpFile:
                     for chunk in r.iter_content(chunk_size=1024):
                         if chunk:
                             tmpFile.write(chunk)
@@ -373,13 +342,19 @@ class DownloadKit(object):
                 download_status, info = False, f'下载失败。\n{e}'
 
             else:
+                # todo: 完成后检测任务是否完成，如果是检查文件大小是否正确
                 if full_path.stat().st_size == 0:
                     download_status, info = False, '文件大小为0。'
+
+                elif file_size and downloaded_size < file_size:
+                    mission.rate = round((downloaded_size / file_size) * 100, 2)
+                    download_status, info = False, '文件下载中断。'
 
                 else:
                     download_status, info = True, str(full_path)
 
             finally:
+                # todo: 多线程下载一个文件时不要删除
                 if download_status is False and full_path.exists():
                     full_path.unlink()  # 删除下载出错文件
                 r.close()
@@ -441,6 +416,7 @@ class DownloadKit(object):
             kwargs['headers']['Host'] = hostname
             kwargs['headers']['Referer'] = hostname
 
+        kwargs['stream'] = True
         if 'timeout' not in kwargs_set:
             kwargs['timeout'] = self.timeout
 
@@ -456,6 +432,7 @@ class DownloadKit(object):
 
                 if r:
                     e = 'Success'
+                    r = _set_charset(r)
                     break
 
             except Exception as e:
@@ -465,11 +442,79 @@ class DownloadKit(object):
             if i < self.retry:
                 sleep(self.interval)
 
-        return _set_charset(r), e
+        if r is None:
+            return None, e
+
+        if not r.ok:
+            return r, f'状态码：{r.status_code}'
 
     def _stop_show(self):
         input()
         self._stop_printing = True
+
+    def _get_file_info(self,
+                       response,
+                       goal_path: str = None,
+                       rename: str = None,
+                       file_exists: str = None) -> dict:
+        """获取文件信息，大小单位为byte                   \n
+        包括：size、path、skip
+        :param response: Response对象
+        :param goal_path: 目标文件夹
+        :param rename: 重命名
+        :param file_exists: 存在重名文件时的处理方式
+        :return: 文件名、文件大小、保存路径、是否跳过
+        """
+        goal_path = goal_path or self.goal_path or '.'
+        file_exists = file_exists or self.file_exists
+
+        # ------------获取文件大小------------
+        file_size = response.headers.get('Content-Length', None)
+        file_size = None if file_size is None else int(file_size)
+
+        # ------------获取网络文件名------------
+        file_name = _get_file_name(response)
+
+        # ------------获取保存路径------------
+        goal_Path = Path(goal_path)
+        # 按windows规则去除路径中的非法字符
+        goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
+        goal_Path = Path(goal_path).absolute()
+        goal_Path.mkdir(parents=True, exist_ok=True)
+
+        # ------------获取保存文件名------------
+        # -------------------重命名，不改变扩展名-------------------
+        if rename:
+            ext_name = file_name.split('.')[-1]
+            if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
+                full_name = rename
+            else:
+                full_name = f'{rename}.{ext_name}'
+        else:
+            full_name = file_name
+
+        full_name = make_valid_name(full_name)
+
+        # -------------------生成路径-------------------
+        skip = False
+        full_path = goal_Path / full_name
+
+        if full_path.exists():
+            if file_exists == 'rename':
+                full_path = get_usable_path(full_path)
+
+            elif file_exists == 'skip':
+                skip = True
+
+            elif file_exists == 'overwrite':
+                pass
+
+        # with open(full_path, 'w'):
+        #     pass
+
+        return {'size': file_size,
+                'path': full_path,
+                'skip': skip}
 
 
 class Mission(object):
@@ -483,10 +528,10 @@ class Mission(object):
         """
         self._id = ID
         self.data = data
-        self.state = 'waiting'
+        self.state = 'waiting'  # 'waiting'、'running'、'done'
         self.rate = 0
         self.info = '等待下载'
-        self.result = None
+        self.result = None  # True表示成功，False表示失败，None表示跳过
 
         self.file_name = None
         self.path = None
@@ -507,9 +552,30 @@ class Mission(object):
         return self.download_kit.wait(self, show)
 
 
-def _get_download_file_name(url, response) -> str:
+def _set_charset(response):
+    # 在headers中获取编码
+    content_type = response.headers.get('content-type', '').lower()
+    charset = search(r'charset[=: ]*(.*)?[;]', content_type)
+
+    if charset:
+        response.encoding = charset.group(1)
+
+    # 在headers中获取不到编码，且如果是网页
+    elif content_type.replace(' ', '').startswith('text/html'):
+        re_result = search(b'<meta.*?charset=[ \\\'"]*([^"\\\' />]+).*?>', response.content)
+
+        if re_result:
+            charset = re_result.group(1).decode()
+        else:
+            charset = response.apparent_encoding
+
+        response.encoding = charset
+
+    return response
+
+
+def _get_file_name(response) -> str:
     """从headers或url中获取文件名，如果获取不到，生成一个随机文件名
-    :param url: 文件url
     :param response: 返回的response
     :return: 下载文件的文件名
     """
@@ -538,8 +604,8 @@ def _get_download_file_name(url, response) -> str:
         file_name = file_name.strip("'")
 
     # 在url里获取文件名
-    if not file_name and os_PATH.basename(url):
-        file_name = os_PATH.basename(url).split("?")[0]
+    if not file_name and os_PATH.basename(response.url):
+        file_name = os_PATH.basename(response.url).split("?")[0]
 
     # 找不到则用时间和随机数生成文件名
     if not file_name:
@@ -548,28 +614,3 @@ def _get_download_file_name(url, response) -> str:
     # 去除非法字符
     charset = charset or 'utf-8'
     return unquote(file_name, charset)
-
-
-def _set_charset(response):
-    if response is None:
-        return
-
-    # 在headers中获取编码
-    content_type = response.headers.get('content-type', '').lower()
-    charset = search(r'charset[=: ]*(.*)?[;]', content_type)
-
-    if charset:
-        response.encoding = charset.group(1)
-
-    # 在headers中获取不到编码，且如果是网页
-    elif content_type.replace(' ', '').startswith('text/html'):
-        re_result = search(b'<meta.*?charset=[ \\\'"]*([^"\\\' />]+).*?>', response.content)
-
-        if re_result:
-            charset = re_result.group(1).decode()
-        else:
-            charset = response.apparent_encoding
-
-        response.encoding = charset
-
-    return response
