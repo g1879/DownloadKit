@@ -51,7 +51,7 @@ class DownloadKit(object):
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
         self.show_errmsg = False
-        # self.split_size = 20480  # 分块大小（20M）
+        self.split_size = 20480  # 分块大小（20M）
 
         self.session = session
 
@@ -120,8 +120,6 @@ class DownloadKit(object):
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
-        :param retry: 重试次数，默认跟随实例属性
-        :param interval: 重试间隔，默认跟随实例属性
         :param kwargs: 连接参数
         :return: 任务对象
         """
@@ -184,26 +182,37 @@ class DownloadKit(object):
             r.record()
         return lst
 
-    def wait(self, mission: Union[int, 'Mission'] = None, show: bool = True) -> Union[tuple, None]:
+    def wait(self,
+             mission: Union[int, 'Mission'] = None,
+             show: bool = True,
+             timeout: float = None) -> Union[tuple, None]:
         """等待所有或指定任务完成                                    \n
         :param mission: 任务对象或任务id，为None时等待所有任务结束
         :param show: 是否显示进度
+        :param timeout: 超时时间，默认为连接超时时间，0为无限
         :return: 任务结果和信息组成的tuple
         """
+        timeout = timeout if timeout is not None else self.timeout
         if mission:
             mission = self.get_mission(mission)
             if show:
                 print(f'url：{mission.data["file_url"]}')
-                t1 = perf_counter()
-                while mission.file_name is None and perf_counter() - t1 < 4:
+                t2 = perf_counter()
+                while mission.file_name is None and perf_counter() - t2 < 4:
                     sleep(0.01)
                 print(f'文件名：{mission.file_name}')
                 print(f'目标路径：{mission.path}')
+                if not mission.size:
+                    print('未知大小 ', end='')
+            t1 = perf_counter()
+            while mission.state != 'done' and (perf_counter() - t1 < timeout or timeout == 0):
+                if show and mission.size:
+                    try:
+                        rate = round((mission.path.stat().st_size / mission.size) * 100, 2)
+                        print(f'\r{rate}% ', end='')
+                    except FileNotFoundError:
+                        pass
 
-            while mission.state != 'done':
-                if show:
-                    end = '% ' if isinstance(mission.rate, (float, int)) else ' '
-                    print(f'\r{mission.rate}', end=end)
                 sleep(0.1)
 
             if show:
@@ -222,7 +231,8 @@ class DownloadKit(object):
             if show:
                 self.show(False)
             else:
-                while self.is_running():
+                t1 = perf_counter()
+                while self.is_running() and (perf_counter() - t1 < timeout or timeout == 0):
                     sleep(0.1)
 
     def show(self, asyn: bool = True, keep: bool = False) -> None:
@@ -249,7 +259,12 @@ class DownloadKit(object):
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
-                rate, path = (f'{m.rate}%', f'{m.path}{sep}{m.file_name}') if m else ('空闲', '')
+                if m and m.path:
+                    rate = f'{round((m.path.stat().st_size / m.size) * 100, 2)}%' if m.size else '未知大小'
+                    path = f'{m.path}{sep}{m.file_name}'
+                else:
+                    rate = '空闲'
+                    path = ''
                 print(f'\033[K', end='')
                 print(f'线程{k}：{rate} {path}')
 
@@ -274,6 +289,11 @@ class DownloadKit(object):
         :param mission: 下载任务对象
         :return: None
         """
+
+        def set_result(res, info):
+            mission.result = res
+            mission.info = info
+
         file_url = mission.data['file_url']
         goal_path = mission.data['goal_path']
         session = mission.data['session']
@@ -288,11 +308,6 @@ class DownloadKit(object):
         goal_Path = Path(goal_path).absolute()
         goal_Path.mkdir(parents=True, exist_ok=True)
         goal_path = str(goal_Path)
-        mission.path = goal_path
-
-        def set_result(res, info):
-            mission.result = res
-            mission.info = info
 
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
@@ -306,7 +321,9 @@ class DownloadKit(object):
         file_info = self._get_file_info(r, goal_path, rename, file_exists)
         file_size = file_info['size']
         full_path = file_info['path']
+        mission.path = full_path
         mission.file_name = full_path.name
+        mission.size = file_size
 
         if file_info['skip']:
             set_result(None, '已跳过')
@@ -317,37 +334,29 @@ class DownloadKit(object):
             return
 
         # -------------------设置分块-------------------
-        # if file_size and file_size > self.split_size:
-        #     pass
+        if file_size and file_size > self.split_size:
+            pass
 
         def do() -> tuple:
             # -------------------开始下载-------------------
             # 已下载文件大小和下载状态
-            downloaded_size, download_status = 0, False
+            download_status = False
             try:
                 with open(full_path, 'wb') as tmpFile:
-                    for chunk in r.iter_content(chunk_size=1024):
+                    for chunk in r.iter_content(chunk_size=65536):
                         if chunk:
                             tmpFile.write(chunk)
-
-                            # 如表头有返回文件大小，显示进度
-                            if file_size:
-                                downloaded_size += 1024
-                                rate = downloaded_size / file_size if downloaded_size < file_size else 1
-                                mission.rate = round(rate * 100, 2)
-                            else:
-                                mission.rate = '未知大小'
 
             except Exception as e:
                 download_status, info = False, f'下载失败。\n{e}'
 
             else:
                 # todo: 完成后检测任务是否完成，如果是检查文件大小是否正确
-                if full_path.stat().st_size == 0:
+                result_size = full_path.stat().st_size
+                if result_size == 0:
                     download_status, info = False, '文件大小为0。'
 
-                elif file_size and downloaded_size < file_size:
-                    mission.rate = round((downloaded_size / file_size) * 100, 2)
+                elif file_size and result_size < file_size:
                     download_status, info = False, '文件下载中断。'
 
                 else:
@@ -433,7 +442,7 @@ class DownloadKit(object):
                 if r:
                     e = 'Success'
                     r = _set_charset(r)
-                    break
+                    return r, e
 
             except Exception as e:
                 if self.show_errmsg:
@@ -529,12 +538,12 @@ class Mission(object):
         self._id = ID
         self.data = data
         self.state = 'waiting'  # 'waiting'、'running'、'done'
-        self.rate = 0
+        self.size = None
         self.info = '等待下载'
         self.result = None  # True表示成功，False表示失败，None表示跳过
 
         self.file_name = None
-        self.path = None
+        self.path = None  # 文件完整路径，Path对象
         self.download_kit = download_kit
 
     def __repr__(self) -> str:
