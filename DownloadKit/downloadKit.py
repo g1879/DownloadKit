@@ -14,8 +14,9 @@ from time import time, sleep, perf_counter
 from typing import Union
 from urllib.parse import quote, urlparse, unquote
 
-from requests import Session
+from requests import Session, Response
 from DataRecorder import Recorder
+from requests.structures import CaseInsensitiveDict
 
 from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter
 
@@ -79,6 +80,7 @@ class DownloadKit(object):
                            rename=rename,
                            file_exists=file_exists,
                            post_data=post_data,
+                           split=False,
                            **kwargs)
         return self.wait(mission, show=show_msg)
 
@@ -112,6 +114,7 @@ class DownloadKit(object):
             rename: str = None,
             file_exists: str = None,
             post_data: Union[str, dict] = None,
+            split: bool = True,
             **kwargs) -> 'Mission':
         """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
@@ -120,6 +123,7 @@ class DownloadKit(object):
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
+        :param split: 是否允许多线程分块下载
         :param kwargs: 连接参数
         :return: 任务对象
         """
@@ -129,11 +133,16 @@ class DownloadKit(object):
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
                 'post_data': post_data,
+                'split': split,
                 'kwargs': kwargs}
         self._missions_num += 1
         mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
+        self._run_or_wait(mission)
+        return mission
 
+    def _run_or_wait(self, mission: 'Mission'):
+        """接收任务，有空线程则运行，没有则进入等待队列"""
         thread_id = self._get_usable_thread()
         if thread_id is not None:
             thread = Thread(target=self._run, args=(thread_id, mission))
@@ -142,9 +151,12 @@ class DownloadKit(object):
         else:
             self._waiting_list.put(mission)
 
-        return mission
-
-    def _run(self, ID: int, mission: 'Mission'):
+    def _run(self, ID: int, mission: 'Mission') -> None:
+        """
+        :param ID: 线程id
+        :param mission: 任务对象
+        :return:
+        """
         while True:
             if not mission:
                 if not self._waiting_list.empty():
@@ -278,12 +290,6 @@ class DownloadKit(object):
 
         print()
 
-    def _get_usable_thread(self) -> Union[int, None]:
-        """获取可用线程，没有则返回None"""
-        for k, v in self._threads.items():
-            if v is None:
-                return k
-
     def _download(self, mission: 'Mission') -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
         :param mission: 下载任务对象
@@ -297,10 +303,26 @@ class DownloadKit(object):
         file_url = mission.data['file_url']
         goal_path = mission.data['goal_path']
         session = mission.data['session']
-        rename = mission.data['rename']
-        file_exists = mission.data['file_exists']
         post_data = mission.data['post_data']
         kwargs = mission.data['kwargs']
+
+        if isinstance(mission, Task):
+            kwargs = CaseInsensitiveDict(kwargs)
+            if 'headers' not in kwargs:
+                kwargs['headers'] = {'Range': f"bytes={mission.range[0]}-{mission.range[1]}"}
+            else:
+                kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
+            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
+            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+
+            result = _do_download(r, mission)
+            set_result(*result)
+
+            return
+
+        rename = mission.data['rename']
+        file_exists = mission.data['file_exists']
+        split = mission.data['split']
 
         goal_Path = Path(goal_path)
         # 按windows规则去除路径中的非法字符
@@ -333,55 +355,18 @@ class DownloadKit(object):
             set_result(False, inf)
             return
 
-        # -------------------设置分块-------------------
-        if file_size and file_size > self.split_size:
+        # -------------------设置分块任务-------------------
+        block = None
+        if split and file_size and file_size > self.split_size and r.headers.get('Accept-Ranges') == 'bytes':
+            block = self.split_size
+            # chunks = [(s+1, min(s + self.split_size, file_size)) for s in range(-1, file_size, self.split_size)]
+            chunks = [(s, min(s + self.split_size, file_size)) for s in range(0, file_size, self.split_size)]
+            for chunk in chunks[1:]:
+                self._run_or_wait(Task(mission, chunk))
+
+        with open(full_path, 'wb') as f:
             pass
-
-        def do() -> tuple:
-            # -------------------开始下载-------------------
-            # 已下载文件大小和下载状态
-            download_status = False
-            try:
-                with open(full_path, 'wb') as tmpFile:
-                    for chunk in r.iter_content(chunk_size=65536):
-                        if chunk:
-                            tmpFile.write(chunk)
-
-            except Exception as e:
-                download_status, info = False, f'下载失败。\n{e}'
-
-            else:
-                # todo: 完成后检测任务是否完成，如果是检查文件大小是否正确
-                result_size = full_path.stat().st_size
-                if result_size == 0:
-                    download_status, info = False, '文件大小为0。'
-
-                elif file_size and result_size < file_size:
-                    download_status, info = False, '文件下载中断。'
-
-                else:
-                    download_status, info = True, str(full_path)
-
-            finally:
-                # todo: 多线程下载一个文件时不要删除
-                if download_status is False and full_path.exists():
-                    full_path.unlink()  # 删除下载出错文件
-                r.close()
-
-            # -------------------返回结果-------------------
-            info = str(full_path.absolute()) if download_status else info
-            return download_status, info
-
-        result = do()
-
-        # if result[0] is False:  # 第一位为None表示跳过的情况
-        #     for i in range(retry_times):
-        #         sleep(retry_interval)
-        #
-        #         result = do()
-        #         if result[0] is not False:
-        #             break
-
+        result = _do_download(r, mission, block)
         set_result(*result)
 
     def _make_response(self,
@@ -456,6 +441,12 @@ class DownloadKit(object):
 
         if not r.ok:
             return r, f'状态码：{r.status_code}'
+
+    def _get_usable_thread(self) -> Union[int, None]:
+        """获取可用线程，没有则返回None"""
+        for k, v in self._threads.items():
+            if v is None:
+                return k
 
     def _stop_show(self):
         input()
@@ -542,6 +533,8 @@ class Mission(object):
         self.info = '等待下载'
         self.result = None  # True表示成功，False表示失败，None表示跳过
 
+        self.tasks = []  # 多线程下载单个文件时的子任务
+
         self.file_name = None
         self.path = None  # 文件完整路径，Path对象
         self.download_kit = download_kit
@@ -559,6 +552,70 @@ class Mission(object):
         :return: 任务结果和信息组成的tuple
         """
         return self.download_kit.wait(self, show)
+
+
+class Task(Mission):
+    def __init__(self, mission: Mission, range_: tuple):
+        super().__init__(0, mission.data, mission.download_kit)
+        self.parent = mission  # 父任务
+        self.range = range_  # 分块范围
+        self.path = mission.path
+        self.file_name = mission.file_name
+        self.download_kit = mission.download_kit
+
+    def __repr__(self) -> str:
+        return f'<Task {self.state} {self.info}>'
+
+
+def _do_download(r: Response, task: Union[Task, Mission], block: int = None) -> tuple:
+    """
+    :param r: Response对象
+    :param task: 任务
+    :param block: 如果是只要第一个分块，则设置此参数
+    :return:
+    """
+    # -------------------开始下载-------------------
+    path = task.path
+    download_status = False
+    try:
+        # with open(path, 'wb') as f:
+        with open(path, 'rb+') as f:
+            if block:
+                # lock.acquire()
+                f.write(next(r.iter_content(chunk_size=block)))
+            else:
+                if isinstance(task, Task):
+                    f.seek(task.range[0])
+                for chunk in r.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+
+    except Exception as e:
+        # raise
+        print(task.range)
+        download_status, info = False, f'下载失败。\n{e}'
+
+    else:
+        #     # todo: 完成后检测任务是否完成，如果是检查文件大小是否正确
+        result_size = path.stat().st_size
+        if result_size == 0:
+            download_status, info = False, '文件大小为0。'
+        #
+        #     # elif file_size and result_size < file_size:
+        #     #     download_status, info = False, '文件下载中断。'
+        #
+        else:
+            download_status, info = True, str(path)
+
+    # finally:
+    # todo: 多线程下载一个文件时不要删除
+    # if download_status is False and path.exists():
+    #     path.unlink()  # 删除下载出错文件
+    # r.close()
+
+    # -------------------返回结果-------------------
+    # info = str(path.absolute()) if download_status else info
+    return download_status, info
 
 
 def _set_charset(response):
