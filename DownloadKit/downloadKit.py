@@ -488,11 +488,11 @@ class DownloadKit(object):
                 'skip': skip}
 
 
-def _do_download(r: Response, mission: Union[Mission, Task], first: bool = False) -> tuple:
-    """
+def _do_download(r: Response, mission: Union[Mission, Task], first: bool = False):
+    """执行下载任务                                    \n
     :param r: Response对象
     :param mission: 任务
-    :param block: 如果是只要第一个分块，则设置此参数
+    :param first: 是否第一个分块
     :return:
     """
     is_task = isinstance(mission, Task)

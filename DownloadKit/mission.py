@@ -1,4 +1,5 @@
 # -*- coding:utf-8 -*-
+from pathlib import Path
 from time import sleep, perf_counter
 
 
@@ -9,7 +10,6 @@ class Mission(object):
         """初始化                               \n
         :param ID: 任务id
         :param data: 任务数据
-        :param download_kit: 所属下载器
         """
         self._id = ID
         self.data = data
@@ -21,7 +21,7 @@ class Mission(object):
         self.tasks = []  # 多线程下载单个文件时的子任务
 
         self.file_name = None
-        self.path = None  # 文件完整路径，Path对象
+        self.path: Path = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
         return f'<Mission {self.state} {self.info}>'
@@ -29,6 +29,11 @@ class Mission(object):
     @property
     def id(self) -> int:
         return self._id
+
+    def __check(self):
+        """检查下载是否成功"""
+        if self.size:
+            return self.path.stat().st_size == self.size
 
     def wait(self, show: bool = True,
              timeout: float = 0
