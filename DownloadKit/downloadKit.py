@@ -155,7 +155,7 @@ class DownloadKit(object):
     def _run(self, ID: int, mission: 'Mission') -> None:
         """
         :param ID: 线程id
-        :param mission: 任务对象
+        :param mission: 任务对象，Mission或Task
         :return:
         """
         while True:
@@ -169,7 +169,6 @@ class DownloadKit(object):
             mission.state = 'running'
             self._threads[ID]['mission'] = mission
             self._download(mission)
-            # mission.state = 'done'
             mission = None
 
         self._threads[ID] = None

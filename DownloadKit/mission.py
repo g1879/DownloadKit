@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 from pathlib import Path
 from time import sleep, perf_counter
+from typing import Union
 
 
 class Mission(object):
@@ -24,16 +25,34 @@ class Mission(object):
         self.path: Path = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
-        return f'<Mission {self.state} {self.info}>'
+        return f'<Mission {self.id} {self.state} {self.info}>'
 
     @property
     def id(self) -> int:
         return self._id
 
-    def __check(self):
+    @property
+    def is_success(self) -> Union[bool, None]:
         """检查下载是否成功"""
+        if not self.is_done:
+            return None
+
         if self.size:
             return self.path.stat().st_size == self.size
+        else:
+            pass
+
+    @property
+    def is_done(self) -> bool:
+        """检查任务是否完成"""
+        if self.state == 'done':
+            return True
+
+        if self.tasks:
+            if not any((i.state != 'done' for i in self.tasks)):
+                return True
+
+        return False
 
     def wait(self, show: bool = True,
              timeout: float = 0
@@ -86,3 +105,11 @@ class Task(Mission):
 
     def __repr__(self) -> str:
         return f'<Task {self.state} {self.info}>'
+
+    @property
+    def is_done(self) -> bool:
+        return self.state == 'done'
+
+    @property
+    def is_success(self):
+        return self.result
