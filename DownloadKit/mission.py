@@ -17,7 +17,7 @@ class Mission(object):
         self.state = 'waiting'  # 'waiting'、'running'、'done'
         self.size = None
         self.info = '等待下载'
-        self.result = None  # True表示成功，False表示失败，None表示跳过
+        self.result = None  # 'success'、'skip'、False和None四种情况
 
         self.tasks = []  # 多线程下载单个文件时的子任务
 
@@ -31,32 +31,66 @@ class Mission(object):
     def id(self) -> int:
         return self._id
 
-    @property
     def is_success(self) -> Union[bool, None]:
         """检查下载是否成功"""
-        if not self.is_done:
+        if self.result is not None:  # 已有结果，直接返回
+            return self.result
+
+        if not self.is_done:  # 未完成，返回None表示未知
             return None
 
-        if self.size:
-            return self.path.stat().st_size == self.size
-        else:
-            pass
+        result = None
+        if self.size:  # 有size，可返回True或False
+            if self.path.stat().st_size == self.size:
+                self.info = str(self.path)
+                result = 'success'
+            else:
+                self.info = '下载失败'
+                result = False
 
-    @property
+        else:  # 无size，返回None或False
+            if any((i.result is False for i in self.tasks)):
+                self.info = '下载失败'
+                result = False
+
+        self.result = result
+        return result
+
     def is_done(self) -> bool:
         """检查任务是否完成"""
-        if self.state == 'done':
+        if self.state == 'done':  # 已有结果，直接返回
             return True
 
-        if self.tasks:
-            if not any((i.state != 'done' for i in self.tasks)):
-                return True
+        if not any((i.state != 'done' for i in self.tasks)):
+            if not self.size:
+                self.info = str(self.path)
+            self.state = 'done'
+            return True
 
         return False
 
+    @property
+    def rate(self) -> Union[float, None]:
+        """返回下载进度百分比"""
+        return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
+
+    def stop_and_del(self):
+        """失败时删除文件、停止所有task"""
+        self.state = 'done'
+        self.result = False
+
+        for task in self.tasks:
+            task.state = 'done'
+
+        if self.path.exists():
+            while True:
+                try:
+                    self.path.unlink()
+                except PermissionError:
+                    print('等待删除')
+
     def wait(self, show: bool = True,
-             timeout: float = 0
-             ) -> tuple:
+             timeout: float = 0) -> tuple:
         """等待当前任务完成                  \n
         :param show: 是否显示下载进度
         :param timeout: 超时时间
@@ -71,6 +105,7 @@ class Mission(object):
             print(f'目标路径：{self.path}')
             if not self.size:
                 print('未知大小 ', end='')
+
         t1 = perf_counter()
         while self.state != 'done' and (perf_counter() - t1 < timeout or timeout == 0):
             if show and self.size:
@@ -85,10 +120,10 @@ class Mission(object):
         if show:
             if self.result is False:
                 print(f'下载失败 {self.info}')
-            elif self.result is True:
+            elif self.result == 'success':
                 print('\r100% ', end='')
                 print(f'下载完成 {self.info}')
-            else:
+            elif self.result == 'skip':
                 print(f'已跳过 {self.info}')
             print()
 
@@ -112,4 +147,4 @@ class Task(Mission):
 
     @property
     def is_success(self):
-        return self.result
+        return True if self.result else False

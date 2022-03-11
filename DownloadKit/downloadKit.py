@@ -168,7 +168,7 @@ class DownloadKit(object):
             mission.info = '下载中'
             mission.state = 'running'
             self._threads[ID]['mission'] = mission
-            self._download(mission)
+            self._download(mission, ID)
             mission = None
 
         self._threads[ID] = None
@@ -241,13 +241,14 @@ class DownloadKit(object):
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
                 if m and m.path:
-                    rate = f'{round((m.path.stat().st_size / m.size) * 100, 2)}%' if m.size else '未知大小'
+                    # rate = f'{m.rate}%' if m.size else '未知大小'
                     path = f'{m.path}{sep}{m.file_name}'
                 else:
-                    rate = '空闲'
-                    path = ''
+                    # rate = ''
+                    path = '空闲'
                 print(f'\033[K', end='')
-                print(f'线程{k}：{rate} {path}')
+                # print(f'线程{k}：{rate} {path}')
+                print(f'线程{k}：{path}')
 
             print(f'\033[{self.size + 1}A\r', end='')
             sleep(0.4)
@@ -259,15 +260,16 @@ class DownloadKit(object):
 
         print()
 
-    def _download(self, mission: 'Mission') -> None:
+    def _download(self, mission: 'Mission', ID: int) -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
         :param mission: 下载任务对象
         :return: None
         """
 
-        def set_result(res, info):
+        def set_result(res, info, state):
             mission.result = res
             mission.info = info
+            mission.state = state
 
         file_url = mission.data['file_url']
         goal_path = mission.data['goal_path']
@@ -301,14 +303,15 @@ class DownloadKit(object):
 
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
-            set_result(None, '已跳过')
+            mission.path = goal_Path / rename
+            set_result('skip', str(mission.path), 'done')
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
         r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
         # -------------------获取文件信息-------------------
-        file_info = self._get_file_info(r, goal_path, rename, file_exists)
+        file_info = _get_file_info(r, goal_path, rename, file_exists)
         file_size = file_info['size']
         full_path = file_info['path']
         mission.path = full_path
@@ -316,31 +319,40 @@ class DownloadKit(object):
         mission.size = file_size
 
         if file_info['skip']:
-            set_result(None, '已跳过')
+            set_result('skip', full_path, 'done')
             return
 
         if not r:
-            set_result(False, inf)
+            set_result(False, inf, 'done')
             return
 
         # -------------------设置分块任务-------------------
         first = False
         if split and file_size and file_size > self.split_size and r.headers.get('Accept-Ranges') == 'bytes':
-            # chunks = [(s+1, min(s + self.split_size, file_size)) for s in range(-1, file_size, self.split_size)]
             first = True
+            # chunks = [(s+1, min(s + self.split_size, file_size)) for s in range(-1, file_size, self.split_size)]
             chunks = [(s, min(s + self.split_size, file_size)) for s in range(0, file_size, self.split_size)]
-            m2 = mission
-            mission = Task(mission, chunks[0])
-            m2.tasks.append(mission)
+
+            task1 = Task(mission, chunks[0])
+            task1.info = '下载中'
+            task1.state = 'running'
+
+            mission.tasks = []
+            mission.tasks.append(task1)
+
             for chunk in chunks[1:]:
                 task = Task(mission, chunk)
-                m2.tasks.append(task)
+                mission.tasks.append(task)
                 self._run_or_wait(task)
+
+        else:  # 不分块
+            task1 = Task(mission, (0, None))
 
         with open(full_path, 'wb'):
             pass
 
-        _do_download(r, mission, first)
+        self._threads[ID]['mission'] = task1
+        _do_download(r, task1, first)
 
     def _make_response(self,
                        url: str,
@@ -425,117 +437,50 @@ class DownloadKit(object):
         input()
         self._stop_printing = True
 
-    def _get_file_info(self,
-                       response,
-                       goal_path: str = None,
-                       rename: str = None,
-                       file_exists: str = None) -> dict:
-        """获取文件信息，大小单位为byte                   \n
-        包括：size、path、skip
-        :param response: Response对象
-        :param goal_path: 目标文件夹
-        :param rename: 重命名
-        :param file_exists: 存在重名文件时的处理方式
-        :return: 文件名、文件大小、保存路径、是否跳过
-        """
-        goal_path = goal_path or self.goal_path or '.'
-        file_exists = file_exists or self.file_exists
 
-        # ------------获取文件大小------------
-        file_size = response.headers.get('Content-Length', None)
-        file_size = None if file_size is None else int(file_size)
-
-        # ------------获取网络文件名------------
-        file_name = _get_file_name(response)
-
-        # ------------获取保存路径------------
-        goal_Path = Path(goal_path)
-        # 按windows规则去除路径中的非法字符
-        goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
-        goal_Path = Path(goal_path).absolute()
-        goal_Path.mkdir(parents=True, exist_ok=True)
-
-        # ------------获取保存文件名------------
-        # -------------------重命名，不改变扩展名-------------------
-        if rename:
-            ext_name = file_name.split('.')[-1]
-            if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
-                full_name = rename
-            else:
-                full_name = f'{rename}.{ext_name}'
-        else:
-            full_name = file_name
-
-        full_name = make_valid_name(full_name)
-
-        # -------------------生成路径-------------------
-        skip = False
-        full_path = goal_Path / full_name
-
-        if full_path.exists():
-            if file_exists == 'rename':
-                full_path = get_usable_path(full_path)
-
-            elif file_exists == 'skip':
-                skip = True
-
-            elif file_exists == 'overwrite':
-                pass
-
-        return {'size': file_size,
-                'path': full_path,
-                'skip': skip}
-
-
-def _do_download(r: Response, mission: Union[Mission, Task], first: bool = False):
+def _do_download(r: Response, task: Task, first: bool = False):
     """执行下载任务                                    \n
     :param r: Response对象
-    :param mission: 任务
+    :param task: 任务
     :param first: 是否第一个分块
     :return:
     """
-    is_task = isinstance(mission, Task)
+    if task.state == 'done':
+        return
+
     try:
-        with open(mission.path, 'rb+') as f:
+        with open(task.path, 'rb+') as f:
             if first:  # 分块时第一块
-                f.write(next(r.iter_content(chunk_size=mission.range[1])))
+                f.write(next(r.iter_content(chunk_size=task.range[1])))
             else:
-                if is_task:
-                    f.seek(mission.range[0])
+                f.seek(task.range[0])
                 for chunk in r.iter_content(chunk_size=65536):
-                    if mission.result is False:
+                    if task.state == 'done':
                         break
                     if chunk:
                         f.write(chunk)
 
     except Exception as e:
-        # raise
-        print(f'出错{mission.range}出错')
+        print(f'出错{task.range}出错')
         success, info = False, f'下载失败。\n{e}'
 
     else:
-        # todo: 添加判断文件大小
-        success, info = True, str(mission.path)
+        success, info = 'success', str(task.path)
 
     finally:
         r.close()
 
-    mission.state = 'done'
-    mission.result = success
-    mission.info = info
+    task.state = 'done'
+    task.result = success
+    task.info = info
 
-    if success and is_task:
-        # 判断是否整个mission完成，并设置
-        pass
-    elif is_task:
-        mission.parent.result = False
-        # 等待所有线程结束后删除文件
-    elif not success:
-        # 删除文件
-        pass
+    mission = task.parent
+    if mission.is_done() and mission.is_success() is False:
+        mission.stop_and_del()
 
 
-def _set_charset(response):
+def _set_charset(response) -> Response:
+    """设置Response对象的编码"""
     # 在headers中获取编码
     content_type = response.headers.get('content-type', '').lower()
     charset = search(r'charset[=: ]*(.*)?[;]', content_type)
@@ -555,6 +500,64 @@ def _set_charset(response):
         response.encoding = charset
 
     return response
+
+
+def _get_file_info(response,
+                   goal_path: str = None,
+                   rename: str = None,
+                   file_exists: str = None) -> dict:
+    """获取文件信息，大小单位为byte                   \n
+    包括：size、path、skip
+    :param response: Response对象
+    :param goal_path: 目标文件夹
+    :param rename: 重命名
+    :param file_exists: 存在重名文件时的处理方式
+    :return: 文件名、文件大小、保存路径、是否跳过
+    """
+    # ------------获取文件大小------------
+    file_size = response.headers.get('Content-Length', None)
+    file_size = None if file_size is None else int(file_size)
+
+    # ------------获取网络文件名------------
+    file_name = _get_file_name(response)
+
+    # ------------获取保存路径------------
+    goal_Path = Path(goal_path)
+    # 按windows规则去除路径中的非法字符
+    goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
+    goal_Path = Path(goal_path).absolute()
+    goal_Path.mkdir(parents=True, exist_ok=True)
+
+    # ------------获取保存文件名------------
+    # -------------------重命名，不改变扩展名-------------------
+    if rename:
+        ext_name = file_name.split('.')[-1]
+        if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
+            full_name = rename
+        else:
+            full_name = f'{rename}.{ext_name}'
+    else:
+        full_name = file_name
+
+    full_name = make_valid_name(full_name)
+
+    # -------------------生成路径-------------------
+    skip = False
+    full_path = goal_Path / full_name
+
+    if full_path.exists():
+        if file_exists == 'rename':
+            full_path = get_usable_path(full_path)
+
+        elif file_exists == 'skip':
+            skip = True
+
+        elif file_exists == 'overwrite':
+            pass
+
+    return {'size': file_size,
+            'path': full_path,
+            'skip': skip}
 
 
 def _get_file_name(response) -> str:
