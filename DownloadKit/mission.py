@@ -148,3 +148,7 @@ class Task(Mission):
     @property
     def is_success(self):
         return True if self.result else False
+
+    @property
+    def id(self) -> int:
+        return self.parent.id

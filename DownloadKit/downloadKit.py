@@ -9,7 +9,7 @@ from pathlib import Path
 from queue import Queue
 from random import randint
 from re import search, sub
-from threading import Thread
+from threading import Thread, Lock
 from time import time, sleep, perf_counter
 from typing import Union
 from urllib.parse import quote, urlparse, unquote
@@ -46,6 +46,7 @@ class DownloadKit(object):
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
         self._stop_printing = False
+        self._lock = Lock()
 
         self.goal_path = str(goal_path)
         self.retry: int = 3
@@ -240,14 +241,12 @@ class DownloadKit(object):
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
+                num = m.id if m else ''
                 if m and m.path:
-                    # rate = f'{m.rate}%' if m.size else '未知大小'
-                    path = f'{m.path}{sep}{m.file_name}'
+                    path = f'M{num} {m.path}{sep}{m.file_name}'
                 else:
-                    # rate = ''
                     path = '空闲'
                 print(f'\033[K', end='')
-                # print(f'线程{k}：{rate} {path}')
                 print(f'线程{k}：{path}')
 
             print(f'\033[{self.size + 1}A\r', end='')
@@ -286,7 +285,7 @@ class DownloadKit(object):
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
-            _do_download(r, mission)
+            _do_download(r, mission, False)
 
             return
 
@@ -311,7 +310,7 @@ class DownloadKit(object):
         r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
         # -------------------获取文件信息-------------------
-        file_info = _get_file_info(r, goal_path, rename, file_exists)
+        file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
         file_size = file_info['size']
         full_path = file_info['path']
         mission.path = full_path
@@ -330,7 +329,6 @@ class DownloadKit(object):
         first = False
         if split and file_size and file_size > self.split_size and r.headers.get('Accept-Ranges') == 'bytes':
             first = True
-            # chunks = [(s+1, min(s + self.split_size, file_size)) for s in range(-1, file_size, self.split_size)]
             chunks = [(s, min(s + self.split_size, file_size)) for s in range(0, file_size, self.split_size)]
 
             task1 = Task(mission, chunks[0])
@@ -347,9 +345,6 @@ class DownloadKit(object):
 
         else:  # 不分块
             task1 = Task(mission, (0, None))
-
-        with open(full_path, 'wb'):
-            pass
 
         self._threads[ID]['mission'] = task1
         _do_download(r, task1, first)
@@ -449,19 +444,28 @@ def _do_download(r: Response, task: Task, first: bool = False):
         return
 
     try:
-        with open(task.path, 'rb+') as f:
-            if first:  # 分块时第一块
-                f.write(next(r.iter_content(chunk_size=task.range[1])))
-            else:
-                f.seek(task.range[0])
-                for chunk in r.iter_content(chunk_size=65536):
-                    if task.state == 'done':
-                        break
-                    if chunk:
-                        f.write(chunk)
+        while True:
+            try:
+                f = open(task.path, 'rb+')
+                break
+            except PermissionError:
+                pass
+
+        if first:  # 分块时第一块
+            f.write(next(r.iter_content(chunk_size=task.range[1])))
+        else:
+            f.seek(task.range[0])
+            for chunk in r.iter_content(chunk_size=65536):
+                if task.state == 'done':
+                    break
+                if chunk:
+                    f.write(chunk)
+
+        f.close()
 
     except Exception as e:
         print(f'出错{task.range}出错')
+        raise
         success, info = False, f'下载失败。\n{e}'
 
     else:
@@ -505,13 +509,15 @@ def _set_charset(response) -> Response:
 def _get_file_info(response,
                    goal_path: str = None,
                    rename: str = None,
-                   file_exists: str = None) -> dict:
+                   file_exists: str = None,
+                   lock: Lock = None) -> dict:
     """获取文件信息，大小单位为byte                   \n
     包括：size、path、skip
     :param response: Response对象
     :param goal_path: 目标文件夹
     :param rename: 重命名
     :param file_exists: 存在重名文件时的处理方式
+    :param lock: 线程锁
     :return: 文件名、文件大小、保存路径、是否跳过
     """
     # ------------获取文件大小------------
@@ -545,15 +551,20 @@ def _get_file_info(response,
     skip = False
     full_path = goal_Path / full_name
 
-    if full_path.exists():
-        if file_exists == 'rename':
-            full_path = get_usable_path(full_path)
+    with lock:
+        if full_path.exists():
+            if file_exists == 'rename':
+                full_path = get_usable_path(full_path)
 
-        elif file_exists == 'skip':
-            skip = True
+            elif file_exists == 'skip':
+                skip = True
 
-        elif file_exists == 'overwrite':
-            pass
+            elif file_exists == 'overwrite':
+                full_path.unlink()
+
+        if not skip:
+            with open(full_path, 'wb'):
+                pass
 
     return {'size': file_size,
             'path': full_path,
