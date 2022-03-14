@@ -11,6 +11,30 @@ from typing import Union
 from requests import Session
 
 
+class SplitSizeSetter(object):
+    def __set__(self, split_size, val):
+        if isinstance(val, int):
+            size = val
+        elif isinstance(val, str):
+            num = int(val[:-1])
+            unit = val[-1]
+            if unit in ('k', 'K'):
+                size = num * 1024
+            elif unit in ('m', 'M'):
+                size = num * 1048576
+            elif unit in ('g', 'G'):
+                size = num * 21474836480
+            else:
+                raise ValueError('单位只支持K、M、G。')
+        else:
+            raise TypeError('split_size只能传入int或str')
+
+        split_size._split_size = size
+
+    def __get__(self, split_size, objtype=None):
+        return split_size._split_size
+
+
 class PathSetter(object):
     def __set__(self, goal_path, val):
         if val is not None and not isinstance(val, (str, Path)):

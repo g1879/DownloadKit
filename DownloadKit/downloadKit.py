@@ -18,7 +18,7 @@ from requests import Session, Response
 from DataRecorder import Recorder
 from requests.structures import CaseInsensitiveDict
 
-from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter
+from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, SplitSizeSetter
 from .mission import Task, Mission
 
 
@@ -26,6 +26,7 @@ class DownloadKit(object):
     session = SessionSetter()
     file_exists = FileExistsSetter()
     goal_path = PathSetter()
+    split_size = SplitSizeSetter()
 
     def __init__(self,
                  goal_path: Union[str, Path] = None,
@@ -259,19 +260,12 @@ class DownloadKit(object):
 
         print()
 
-    def _download(self, mission: 'Mission', ID: int) -> None:
+    def _download(self, mission: Mission, ID: int) -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
         :param mission: 下载任务对象
         :return: None
         """
-
-        def set_result(res, info, state):
-            mission.result = res
-            mission.info = info
-            mission.state = state
-
         file_url = mission.data['file_url']
-        goal_path = mission.data['goal_path']
         session = mission.data['session']
         post_data = mission.data['post_data']
         kwargs = mission.data['kwargs']
@@ -282,14 +276,15 @@ class DownloadKit(object):
                 kwargs['headers'] = {'Range': f"bytes={mission.range[0]}-{mission.range[1]}"}
             else:
                 kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
+
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
-
             _do_download(r, mission, False)
 
             return
 
         rename = mission.data['rename']
+        goal_path = mission.data['goal_path']
         file_exists = mission.data['file_exists']
         split = mission.data['split']
 
@@ -303,7 +298,7 @@ class DownloadKit(object):
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
             mission.path = goal_Path / rename
-            set_result('skip', str(mission.path), 'done')
+            _set_result(mission, 'skip', str(mission.path), 'done')
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
@@ -318,11 +313,11 @@ class DownloadKit(object):
         mission.size = file_size
 
         if file_info['skip']:
-            set_result('skip', full_path, 'done')
+            _set_result(mission, 'skip', full_path, 'done')
             return
 
         if not r:
-            set_result(False, inf, 'done')
+            _set_result(mission, False, inf, 'done')
             return
 
         # -------------------设置分块任务-------------------
@@ -449,7 +444,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 f = open(task.path, 'rb+')
                 break
             except PermissionError:
-                pass
+                sleep(.2)
 
         if first:  # 分块时第一块
             f.write(next(r.iter_content(chunk_size=task.range[1])))
@@ -611,3 +606,9 @@ def _get_file_name(response) -> str:
     # 去除非法字符
     charset = charset or 'utf-8'
     return unquote(file_name, charset)
+
+
+def _set_result(mission, res, info, state):
+    mission.result = res
+    mission.info = info
+    mission.state = state
