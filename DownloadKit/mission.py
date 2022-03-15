@@ -25,7 +25,7 @@ class Mission(object):
         self.path: Path = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
-        return f'<Mission {self.id} {self.state} {self.info}>'
+        return f'<Mission {self.id} {self.state} {self.result} {self.info}>'
 
     @property
     def id(self) -> int:
@@ -74,20 +74,21 @@ class Mission(object):
         """返回下载进度百分比"""
         return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
 
-    def stop_and_del(self):
-        """失败时删除文件、停止所有task"""
-        self.state = 'done'
-        self.result = False
-
+    def cancel(self):
+        """停止所有task"""
         for task in self.tasks:
-            task.state = 'done'
+            if task.state == 'running':
+                task.state = 'cancel'
+            elif task.state == 'waiting':
+                task.state = 'done'
 
+    def del_file(self):
+        """删除下载的文件"""
         if self.path.exists():
-            while True:
-                try:
-                    self.path.unlink()
-                except PermissionError:
-                    print('等待删除')
+            try:
+                self.path.unlink()
+            except Exception:
+                pass
 
     def wait(self, show: bool = True,
              timeout: float = 0) -> tuple:

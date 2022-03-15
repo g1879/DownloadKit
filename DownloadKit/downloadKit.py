@@ -18,7 +18,7 @@ from requests import Session, Response
 from DataRecorder import Recorder
 from requests.structures import CaseInsensitiveDict
 
-from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, SplitSizeSetter
+from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, BlockSizeSetter
 from .mission import Task, Mission
 
 
@@ -26,36 +26,36 @@ class DownloadKit(object):
     session = SessionSetter()
     file_exists = FileExistsSetter()
     goal_path = PathSetter()
-    split_size = SplitSizeSetter()
+    block_size = BlockSizeSetter()
 
     def __init__(self,
                  goal_path: Union[str, Path] = None,
-                 size: int = 10,
+                 roads: int = 10,
                  session: Union[Session, 'SessionOptions', 'MixPage', 'Drission'] = None,
                  timeout: float = None,
                  file_exists: str = 'rename'):
         """初始化                                                                         \n
         :param goal_path: 文件保存路径
-        :param size: 可同时运行的线程数
+        :param roads: 可同时运行的线程数
         :param session: 使用的Session对象，或配置对象等
         :param timeout: 连接超时时间
         :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'
         """
-        self._size = size
+        self._roads = roads
         self._missions = {}
-        self._threads = {i: None for i in range(self._size)}
+        self._threads = {i: None for i in range(self._roads)}
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
         self._stop_printing = False
         self._lock = Lock()
 
-        self.goal_path = str(goal_path)
+        self.goal_path: str = str(goal_path)
         self.retry: int = 3
         self.interval: float = 5
         self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
-        self.show_errmsg = False
-        self.split_size = 20971520  # 分块大小（20M）
+        self.show_errmsg: bool = False
+        self.block_size: Union[str, int] = '20M'  # 分块大小
 
         self.session = session
 
@@ -90,16 +90,16 @@ class DownloadKit(object):
     @property
     def size(self) -> int:
         """可同时运行的线程数"""
-        return self._size
+        return self._roads
 
     @size.setter
     def size(self, val: int) -> None:
         """设置size值"""
         if self.is_running():
             raise RuntimeError('有任务未完成时不能改变size。')
-        if val != self._size:
-            self._size = val
-            self._threads = {i: None for i in range(self._size)}
+        if val != self._roads:
+            self._roads = val
+            self._threads = {i: None for i in range(self._roads)}
 
     @property
     def waiting_list(self) -> Queue:
@@ -167,8 +167,6 @@ class DownloadKit(object):
                 else:
                     break
 
-            mission.info = '下载中'
-            mission.state = 'running'
             self._threads[ID]['mission'] = mission
             self._download(mission, ID)
             mission = None
@@ -260,11 +258,15 @@ class DownloadKit(object):
 
         print()
 
-    def _download(self, mission: Mission, ID: int) -> None:
+    def _download(self, mission: Mission, thread_id: int) -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
         :param mission: 下载任务对象
+        :param thread_id: 线程号
         :return: None
         """
+        if mission.state == 'done':
+            return
+
         file_url = mission.data['file_url']
         session = mission.data['session']
         post_data = mission.data['post_data']
@@ -279,9 +281,13 @@ class DownloadKit(object):
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
-            _do_download(r, mission, False)
+            _do_download(r, mission, False, self._lock)
 
             return
+
+        # ===================开始处理mission====================
+        mission.info = '下载中'
+        mission.state = 'running'
 
         rename = mission.data['rename']
         goal_path = mission.data['goal_path']
@@ -322,13 +328,11 @@ class DownloadKit(object):
 
         # -------------------设置分块任务-------------------
         first = False
-        if split and file_size and file_size > self.split_size and r.headers.get('Accept-Ranges') == 'bytes':
+        if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
             first = True
-            chunks = [(s, min(s + self.split_size, file_size)) for s in range(0, file_size, self.split_size)]
+            chunks = [(s, min(s + self.block_size, file_size)) for s in range(0, file_size, self.block_size)]
 
             task1 = Task(mission, chunks[0])
-            task1.info = '下载中'
-            task1.state = 'running'
 
             mission.tasks = []
             mission.tasks.append(task1)
@@ -341,8 +345,8 @@ class DownloadKit(object):
         else:  # 不分块
             task1 = Task(mission, (0, None))
 
-        self._threads[ID]['mission'] = task1
-        _do_download(r, task1, first)
+        self._threads[thread_id]['mission'] = task1
+        _do_download(r, task1, first, self._lock)
 
     def _make_response(self,
                        url: str,
@@ -428,54 +432,66 @@ class DownloadKit(object):
         self._stop_printing = True
 
 
-def _do_download(r: Response, task: Task, first: bool = False):
+def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None):
     """执行下载任务                                    \n
     :param r: Response对象
     :param task: 任务
     :param first: 是否第一个分块
-    :return:
+    :param lock: 线程锁
+    :return: None
     """
-    if task.state == 'done':
+    if task.state in ('cancel', 'done'):
+        task.state = 'done'
         return
 
-    try:
-        while True:
-            try:
-                f = open(task.path, 'rb+')
-                break
-            except PermissionError:
-                sleep(.2)
+    task.state = 'running'
+    task.info = '下载中'
 
+    while True:  # 争夺文件读写权限
+        try:
+            f = open(task.path, 'rb+')
+            break
+        except PermissionError:
+            sleep(.2)
+
+    try:
         if first:  # 分块时第一块
             f.write(next(r.iter_content(chunk_size=task.range[1])))
+
         else:
             f.seek(task.range[0])
             for chunk in r.iter_content(chunk_size=65536):
-                if task.state == 'done':
+                if task.state == 'cancel':
                     break
                 if chunk:
                     f.write(chunk)
 
-        f.close()
-
     except Exception as e:
-        print(f'出错{task.range}出错')
-        raise
-        success, info = False, f'下载失败。\n{e}'
+        success, info = False, f'下载失败。{e}'
 
     else:
         success, info = 'success', str(task.path)
 
     finally:
+        f.close()
         r.close()
 
     task.state = 'done'
     task.result = success
     task.info = info
-
     mission = task.parent
+    
+    if not success:
+        mission.cancel()
+        mission.result = success
+        mission.info = info
+
+        while not mission.is_done():
+            sleep(.3)
+
     if mission.is_done() and mission.is_success() is False:
-        mission.stop_and_del()
+        with lock:
+            mission.del_file()
 
 
 def _set_charset(response) -> Response:

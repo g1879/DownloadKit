@@ -11,28 +11,25 @@ from typing import Union
 from requests import Session
 
 
-class SplitSizeSetter(object):
-    def __set__(self, split_size, val):
-        if isinstance(val, int):
+class BlockSizeSetter(object):
+    def __set__(self, block_size, val):
+        if isinstance(val, int) and val > 0:
             size = val
         elif isinstance(val, str):
+            units = {'b': 1, 'k': 1024, 'm': 1048576, 'g': 21474836480}
             num = int(val[:-1])
-            unit = val[-1]
-            if unit in ('k', 'K'):
-                size = num * 1024
-            elif unit in ('m', 'M'):
-                size = num * 1048576
-            elif unit in ('g', 'G'):
-                size = num * 21474836480
+            unit = units.get(val[-1].lower(), None)
+            if unit and num > 0:
+                size = num * unit
             else:
-                raise ValueError('单位只支持K、M、G。')
+                raise ValueError('单位只支持B、K、M、G，数字必须为大于0的整数。')
         else:
-            raise TypeError('split_size只能传入int或str')
+            raise TypeError('split_size只能传入int或str，数字必须为大于0的整数。')
 
-        split_size._split_size = size
+        block_size._block_size = size
 
-    def __get__(self, split_size, objtype=None):
-        return split_size._split_size
+    def __get__(self, block_size, objtype=None) -> int:
+        return block_size._block_size
 
 
 class PathSetter(object):
