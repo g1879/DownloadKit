@@ -88,15 +88,16 @@ class DownloadKit(object):
         return self.wait(mission, show=show_msg)
 
     @property
-    def size(self) -> int:
+    def roads(self) -> int:
         """可同时运行的线程数"""
         return self._roads
 
-    @size.setter
-    def size(self, val: int) -> None:
-        """设置size值"""
+    @roads.setter
+    def roads(self, val: int) -> None:
+        """设置roads值"""
         if self.is_running():
-            raise RuntimeError('有任务未完成时不能改变size。')
+            print('有任务未完成时不能改变roads。')
+            return
         if val != self._roads:
             self._roads = val
             self._threads = {i: None for i in range(self._roads)}
@@ -248,11 +249,11 @@ class DownloadKit(object):
                 print(f'\033[K', end='')
                 print(f'线程{k}：{path}')
 
-            print(f'\033[{self.size + 1}A\r', end='')
+            print(f'\033[{self.roads + 1}A\r', end='')
             sleep(0.4)
 
         print(f'\033[1B', end='')
-        for i in range(self.size):
+        for i in range(self.roads):
             print(f'\033[K', end='')
             print(f'线程{i}：空闲')
 

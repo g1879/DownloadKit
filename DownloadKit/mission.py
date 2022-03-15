@@ -22,7 +22,7 @@ class Mission(object):
         self.tasks = []  # 多线程下载单个文件时的子任务
 
         self.file_name = None
-        self.path: Path = None  # 文件完整路径，Path对象
+        self.path: Union[Path, None] = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
         return f'<Mission {self.id} {self.state} {self.result} {self.info}>'
@@ -90,8 +90,7 @@ class Mission(object):
             except Exception:
                 pass
 
-    def wait(self, show: bool = True,
-             timeout: float = 0) -> tuple:
+    def wait(self, show: bool = True, timeout: float = 0) -> tuple:
         """等待当前任务完成                  \n
         :param show: 是否显示下载进度
         :param timeout: 超时时间

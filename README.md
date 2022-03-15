@@ -1,17 +1,18 @@
 # 简介
 
 DownloadKit 是一个基于 python 的简洁易用的多线程文件下载工具。   
-希望做得足够简单，只要不断往里添加下载任务，它会按顺序自行下载完成。
+使用简单，只要不断往里添加下载任务，它会按顺序自行下载完成并返回结果。  
 
 # 特性
 
 - 多线程，可同时下载多个文件
+- 大文件自动分块用多线程下载
 - 自动任务调度，简易的任务添加方式
 - 可使用已有`Session`对象，便于保持登录状态
 - 自动创建目标路径
 - 自动去除路径中的非法字符
 - 自动处理文件名冲突
-- 任务失败自动重试
+- 连接失败自动重试
 
 # 安装
 
@@ -48,7 +49,7 @@ d.add(url2)
 初始化参数：
 
 - goal_path：文件保存路径，默认当前路径
-- size：可同时运行的线程数
+- roads：可同时运行的线程数
 - session：使用的`Session`对象，或配置对象等
 - timeout：连接超时时间
 - file_exists：有同名文件名时的处理方式，可选`'skip'`,`'overwrite'`,`'rename'`
@@ -105,6 +106,8 @@ d = DownloadKit(session=page.drission)
 ## `DownloadKit`属性
 
 - goal_path：文件保存路径，可赋值
+- roads：可同时允许的线程数，没有任务运行时可赋值
+- block_size：大文件分块大小，默认 20MB
 - retry：下载失败重试次数，可赋值
 - interval：下载失败重试间隔，可赋值
 - timeout：连接超时时间，可赋值
@@ -119,25 +122,35 @@ d = DownloadKit(session=page.drission)
 - `overwrite`：覆盖该文件
 - `rename`：以在后面添加序号的方式给新文件重命名
 
+**`block_size`属性说明：**
+
+该属性可接收`int`和`str`形式，接收`int`时以字节为单位；  
+接收`str`时格式有：`'10b'`、`'10k'`、`'10m'`、`'10g'`四种。不区分大小写。
+
 ## 下载设置
 
 可使用以下属性进行配置：
 
 ```python
+d = DownloadKit()
+
 # 设置线程数，只能在没有任务在运行的时候进行
-page.download.size = 20
+d.roads = 20
+
+# 大文件分块大小，默认 20MB
+d.block_size = '50M'
 
 # 设置保存路径，设置后每个任务会使用这个路径，也可添加任务时单独设置
-page.download.goal_path = r'D:\tmp'
+d.goal_path = r'D:\tmp'
 
 # 设置重试次数，初始为3
-page.download.retry = 5
+d.retry = 5
 
 # 设置失败重试间隔，初始为5
-page.download.interval = 2
+d.interval = 2
 
 # 设置存在文件名冲突时的处理方式，可选 'skip', 'overwrite', 'rename'
-page.download.file_exists = 'skip'
+d.file_exists = 'skip'
 ```
 
 
@@ -154,8 +167,7 @@ page.download.file_exists = 'skip'
 - rename：重命名的文件名
 - file_exists：遇到同名文件时的处理方式，可选`'skip'`,`'overwrite'`,`'rename'`，默认跟随实例属性
 - post_data：post 方式使用的数据
-- retry：重试次数，默认跟随实例属性
-- interval：重试间隔，默认跟随实例属性
+- split：是否允许多线分块下载
 - kwargs：连接参数，与 requests 的参数使用方法一致
 
 返回：`Mission`对象
@@ -171,7 +183,7 @@ url = 'https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png'
 mission = d.add(url)
 ```
 
-## 添加任务参数
+## 添加连接参数
 
 可以给`Session`对象添加整体参数，或每个任务设置独立的参数。
 
@@ -239,6 +251,7 @@ d.add(url, data=data)
 参数：
 
 - asyn：是否异步进行
+- keep：是否保持显示，为`True`时即使任务全部结束，也会保持显示，可按回车结束显示
 
 返回：None
 
@@ -253,17 +266,19 @@ d.show()
 
 ```shell
 等待任务数：0
-线程0：97.41% D:\files\abc.zip
-线程1：None None\None
-线程2：None None\None
+线程0：M1 D:\files\abc.zip
+线程1：M1 D:\files\abc.zip
+线程2：空闲
 ```
 
 
 
 ## 等待任务结束
 
-有时须要等待任务结束，以便获取结果，可用`DownloadKit`对象的`wait()`方法。  
+有时须要等待任务结束，以便获取结果，可用`DownloadKit`对象或`Mission`对象的`wait()`方法。  
 当传入任务时，等待该任务结束并返回结果。不传入参数时等待所有任务结束，与`show()`方法一致。
+
+`DownloadKit`对象的`wait()`方法：
 
 参数：
 
@@ -272,14 +287,24 @@ d.show()
 
 返回：
 
-- 指定任务时，返回任务结果和信息组成的两位 tuple。`True`表示成功，`False`表示失败，`None`表示跳过。
+- 指定任务时，返回任务结果和信息组成的两位 tuple。其中任务结果`'success'`表示成功，`False`表示失败，`'skip'`表示跳过。成功和跳过时信息为文件绝对路径，失败时信息为失败原因
 - 不指定任务时，返回`None`
+
+`Mission`对象的`wait()`方法
+
+参数：
+
+- show：是否显示进度
+
+返回：返回任务结果和信息组成的两位 tuple。其中任务结果`'success'`表示成功，`False`表示失败，`'skip'`表示跳过。成功和跳过时信息为文件绝对路径，失败时信息为失败原因
 
 ```python
 d = DownloadKit(r'.\files')
 url = 'https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png'
 mission = d.add(url)
 d.wait(mission)
+# 或
+mission.wait()
 ```
 
 输出：
@@ -302,16 +327,16 @@ mission.wait()
 
 `Mission`对象用于管理下载任务，可查看该任务执行情况。
 
-`Mission`对象属性：
+**`Mission`对象属性：**
 
 - id：任务 id
 - file_name：要保存的文件名
-- path：要保存的路径
+- path：要保存的路径，为Path对象
 - data：任务数据
 - state：任务状态，有`'waiting'`、`'running'`、`'done'`三种
 - rate：任务进度，以百分比显示
 - info：任务信息，成功会返回文件绝对路径，失败会显示原因
-- result：任务结果，`True`表示成功，`False`表示失败，`None`表示跳过
+- result：任务结果，`'success'`表示成功，`False`表示失败，`'skip'`表示跳过
 
 ```python
 mission = page.download.add(url)
@@ -323,3 +348,25 @@ print(mission.state)
 ```python
 running
 ```
+
+
+
+## 取消某个正在下载的任务
+
+使用`Mission`对象的`cancel()`方法，取消会删除该任务已下载的文件。
+
+```python
+mission.cancel()
+```
+
+
+
+## 获取失败任务
+
+使用`DownloadKit`对象的`get_failed_missions()`方法，可获取下载失败的任务。可以把失败的任务保存到文件，支持 txt、xlsx、txt、csv 四种格式。
+
+参数：
+
+- save_to：失败任务保存到文件的路径，默认为`None`表示不保存
+
+返回：`Mission`对象组成的列表
