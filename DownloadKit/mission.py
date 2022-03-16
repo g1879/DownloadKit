@@ -79,8 +79,21 @@ class Mission(object):
         for task in self.tasks:
             if task.state == 'running':
                 task.state = 'cancel'
+                task.result = 'canceled'
+                task.info = '已取消'
+
             elif task.state == 'waiting':
                 task.state = 'done'
+                task.result = 'canceled'
+                task.info = '已取消'
+
+        self.result = 'canceled'
+        self.info = '已取消'
+
+        while not self.is_done():
+            sleep(.3)
+
+        self.del_file()
 
     def del_file(self):
         """删除下载的文件"""
@@ -139,7 +152,7 @@ class Task(Mission):
         self.file_name = mission.file_name
 
     def __repr__(self) -> str:
-        return f'<Task {self.state} {self.info}>'
+        return f'<Task M{self.id} {self.state} {self.result} {self.info}>'
 
     @property
     def is_done(self) -> bool:

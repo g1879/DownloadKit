@@ -4,7 +4,7 @@
 @Contact :   g1879@qq.com
 @File    :   downloadKit.py
 """
-from os import path as os_PATH, sep
+from os import path as os_PATH
 from pathlib import Path
 from queue import Queue
 from random import randint
@@ -14,8 +14,8 @@ from time import time, sleep, perf_counter
 from typing import Union
 from urllib.parse import quote, urlparse, unquote
 
-from requests import Session, Response
 from DataRecorder import Recorder
+from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
 from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, BlockSizeSetter
@@ -31,7 +31,7 @@ class DownloadKit(object):
     def __init__(self,
                  goal_path: Union[str, Path] = None,
                  roads: int = 10,
-                 session: Union[Session, 'SessionOptions', 'MixPage', 'Drission'] = None,
+                 session=None,
                  timeout: float = None,
                  file_exists: str = 'rename'):
         """初始化                                                                         \n
@@ -119,7 +119,7 @@ class DownloadKit(object):
             file_exists: str = None,
             post_data: Union[str, dict] = None,
             split: bool = True,
-            **kwargs) -> 'Mission':
+            **kwargs) -> Mission:
         """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
@@ -145,7 +145,7 @@ class DownloadKit(object):
         self._run_or_wait(mission)
         return mission
 
-    def _run_or_wait(self, mission: 'Mission'):
+    def _run_or_wait(self, mission: Mission):
         """接收任务，有空线程则运行，没有则进入等待队列"""
         thread_id = self._get_usable_thread()
         if thread_id is not None:
@@ -155,16 +155,20 @@ class DownloadKit(object):
         else:
             self._waiting_list.put(mission)
 
-    def _run(self, ID: int, mission: 'Mission') -> None:
+    def _run(self, ID: int, mission: Mission) -> None:
         """
         :param ID: 线程id
         :param mission: 任务对象，Mission或Task
         :return:
         """
         while True:
-            if not mission:
+            if not mission:  # 如果没有任务，就从等候列表中取一个
                 if not self._waiting_list.empty():
-                    mission = self._waiting_list.get()
+                    try:
+                        mission = self._waiting_list.get(True, .5)
+                    except Exception:
+                        self._waiting_list.task_done()
+                        break
                 else:
                     break
 
@@ -174,7 +178,7 @@ class DownloadKit(object):
 
         self._threads[ID] = None
 
-    def get_mission(self, mission_or_id: Union[int, 'Mission']) -> 'Mission':
+    def get_mission(self, mission_or_id: Union[int, Mission]) -> Mission:
         """根据id值获取一个任务                 \n
         :param mission_or_id: 任务或任务id
         :return: 任务对象
@@ -196,7 +200,7 @@ class DownloadKit(object):
         return lst
 
     def wait(self,
-             mission: Union[int, 'Mission'] = None,
+             mission: Union[int, Mission] = None,
              show: bool = True,
              timeout: float = None) -> Union[tuple, None]:
         """等待所有或指定任务完成                                    \n
@@ -243,7 +247,7 @@ class DownloadKit(object):
                 m = v['mission'] if v else None
                 num = m.id if m else ''
                 if m and m.path:
-                    path = f'M{num} {m.path}{sep}{m.file_name}'
+                    path = f'M{num} {m}'
                 else:
                     path = '空闲'
                 print(f'\033[K', end='')
@@ -265,7 +269,8 @@ class DownloadKit(object):
         :param thread_id: 线程号
         :return: None
         """
-        if mission.state == 'done':
+        if mission.state in ('cancel', 'done'):
+            mission.state = 'done'
             return
 
         file_url = mission.data['file_url']
@@ -462,7 +467,7 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
         else:
             f.seek(task.range[0])
             for chunk in r.iter_content(chunk_size=65536):
-                if task.state == 'cancel':
+                if task.state in ('cancel', 'done'):
                     break
                 if chunk:
                     f.write(chunk)
@@ -481,7 +486,7 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
     task.result = success
     task.info = info
     mission = task.parent
-    
+
     if not success:
         mission.cancel()
         mission.result = success
