@@ -22,14 +22,26 @@ class Mission(object):
         self.tasks = []  # 多线程下载单个文件时的子任务
 
         self.file_name = None
-        self.path: Union[Path, None] = None  # 文件完整路径，Path对象
+        self._path: Union[Path, None] = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
-        return f'<Mission {self.id} {self.state} {self.result} {self.info}>'
+        return f'<Mission {self.id} {self.info} {self.file_name}>'
 
     @property
     def id(self) -> int:
         return self._id
+
+    @property
+    def path(self):
+        return self._path
+
+    @path.setter
+    def path(self, path: Union[str, Path, None]):
+        if isinstance(path, (Path, str)):
+            path = Path(path)
+            self.file_name = path.name
+
+        self._path = path
 
     def is_success(self) -> Union[bool, None]:
         """检查下载是否成功"""
@@ -41,7 +53,7 @@ class Mission(object):
 
         result = None
         if self.size:  # 有size，可返回True或False
-            if self.path.stat().st_size == self.size:
+            if self.path.stat().st_size >= self.size:
                 self.info = str(self.path)
                 result = 'success'
             else:
@@ -97,7 +109,7 @@ class Mission(object):
 
     def del_file(self):
         """删除下载的文件"""
-        if self.path.exists():
+        if self.path and self.path.exists():
             try:
                 self.path.unlink()
             except Exception:
@@ -144,15 +156,19 @@ class Mission(object):
 
 
 class Task(Mission):
-    def __init__(self, mission: Mission, range_: tuple):
+    task_id = 0
+
+    def __init__(self, mission: Mission, range_: Union[list, None]):
         super().__init__(0, mission.data)
         self.parent = mission  # 父任务
         self.range = range_  # 分块范围
         self.path = mission.path
         self.file_name = mission.file_name
+        Task.task_id += 1
+        self._id = Task.task_id
 
     def __repr__(self) -> str:
-        return f'<Task M{self.id} {self.state} {self.result} {self.info}>'
+        return f'<Task M{self.parent.id} T{self.id}  {self.info} {self.file_name}>'
 
     @property
     def is_done(self) -> bool:
@@ -161,7 +177,3 @@ class Task(Mission):
     @property
     def is_success(self):
         return True if self.result else False
-
-    @property
-    def id(self) -> int:
-        return self.parent.id

@@ -245,7 +245,7 @@ class DownloadKit(object):
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
-                num = m.id if m else ''
+                num = m.parent.id if isinstance(m, Task) else m.id if m else ''
                 if m and m.path:
                     path = f'M{num} {m}'
                 else:
@@ -336,7 +336,8 @@ class DownloadKit(object):
         first = False
         if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
             first = True
-            chunks = [(s, min(s + self.block_size, file_size)) for s in range(0, file_size, self.block_size)]
+            chunks = [[s, min(s + self.block_size, file_size)] for s in range(0, file_size, self.block_size)]
+            chunks[-1][-1] = ''
 
             task1 = Task(mission, chunks[0])
 
@@ -349,7 +350,7 @@ class DownloadKit(object):
                 self._run_or_wait(task)
 
         else:  # 不分块
-            task1 = Task(mission, (0, None))
+            task1 = Task(mission, None)
 
         self._threads[thread_id]['mission'] = task1
         _do_download(r, task1, first, self._lock)
@@ -465,7 +466,8 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
             f.write(next(r.iter_content(chunk_size=task.range[1])))
 
         else:
-            f.seek(task.range[0])
+            if task.range:
+                f.seek(task.range[0])
             for chunk in r.iter_content(chunk_size=65536):
                 if task.state in ('cancel', 'done'):
                     break
@@ -491,9 +493,6 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
         mission.cancel()
         mission.result = success
         mission.info = info
-
-        while not mission.is_done():
-            sleep(.3)
 
     if mission.is_done() and mission.is_success() is False:
         with lock:
