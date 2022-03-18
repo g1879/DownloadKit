@@ -245,8 +245,8 @@ class DownloadKit(object):
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
-                num = m.parent.id if isinstance(m, Task) else m.id if m else ''
-                if m and m.path:
+                if m:
+                    num = m.parent.id if isinstance(m, Task) else m.id if m else ''
                     path = f'M{num} {m}'
                 else:
                     path = '空闲'
@@ -314,7 +314,9 @@ class DownloadKit(object):
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        # r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        with self._lock:
+            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
         # -------------------获取文件信息-------------------
         file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
