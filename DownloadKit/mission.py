@@ -25,10 +25,10 @@ class Mission(object):
         self._path: Union[Path, None] = None  # 文件完整路径，Path对象
 
     def __repr__(self) -> str:
-        return f'<Mission {self.id} {self.info} {self.file_name}>'
+        return f'<Mission {self.mid} {self.info} {self.file_name}>'
 
     @property
-    def id(self) -> int:
+    def mid(self) -> int:
         return self._id
 
     @property
@@ -168,7 +168,7 @@ class Task(Mission):
         self._id = Task.task_id
 
     def __repr__(self) -> str:
-        return f'<Task M{self.parent.id} T{self.id}  {self.info} {self.file_name}>'
+        return f'<Task M{self.mid} T{self._id}  {self.info} {self.file_name}>'
 
     @property
     def is_done(self) -> bool:
@@ -177,3 +177,7 @@ class Task(Mission):
     @property
     def is_success(self):
         return True if self.result else False
+
+    @property
+    def mid(self) -> int:
+        return self.parent.mid

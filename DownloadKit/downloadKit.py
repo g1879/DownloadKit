@@ -49,7 +49,7 @@ class DownloadKit(object):
         self._stop_printing = False
         self._lock = Lock()
 
-        self.goal_path: str = str(goal_path)
+        self.goal_path: str = goal_path or '.'
         self.retry: int = 3
         self.interval: float = 5
         self.timeout: float = timeout if timeout is not None else 20
@@ -132,7 +132,7 @@ class DownloadKit(object):
         :return: 任务对象
         """
         data = {'file_url': file_url,
-                'goal_path': str(goal_path or self.goal_path or '.'),
+                'goal_path': str(goal_path or self.goal_path),
                 'session': session or self.session,
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
@@ -246,8 +246,8 @@ class DownloadKit(object):
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
                 if m:
-                    num = m.parent.id if isinstance(m, Task) else m.id if m else ''
-                    path = f'M{num} {m}'
+                    rate = m.parent.rate if isinstance(m, Task) else m.rate if m else ''
+                    path = f'M{m.mid} {rate}% {m}'
                 else:
                     path = '空闲'
                 print(f'\033[K', end='')
