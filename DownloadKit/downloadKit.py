@@ -109,7 +109,7 @@ class DownloadKit(object):
 
     def is_running(self) -> bool:
         """检查是否有线程还在运行中"""
-        return any(self._threads.values())
+        return any(self._threads.values()) or not self.waiting_list.empty()
 
     def add(self,
             file_url: str,
@@ -131,9 +131,11 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务对象
         """
+        session = session or self.session
+        session.stream = True
         data = {'file_url': file_url,
                 'goal_path': str(goal_path or self.goal_path),
-                'session': session or self.session,
+                'session': session,
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
                 'post_data': post_data,
@@ -143,6 +145,7 @@ class DownloadKit(object):
         mission = Mission(self._missions_num, data)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
+        # sleep(.1)
         return mission
 
     def _run_or_wait(self, mission: Mission):
@@ -218,7 +221,7 @@ class DownloadKit(object):
                 self.show(False)
             else:
                 t1 = perf_counter()
-                while self.is_running() and (perf_counter() - t1 < timeout or timeout == 0):
+                while self.is_running() or (perf_counter() - t1 < timeout or timeout == 0):
                     sleep(0.1)
 
     def show(self, asyn: bool = True, keep: bool = False) -> None:
@@ -274,7 +277,7 @@ class DownloadKit(object):
             return
 
         file_url = mission.data['file_url']
-        session = mission.data['session']
+        session: Session = mission.data['session']
         post_data = mission.data['post_data']
         kwargs = mission.data['kwargs']
 
@@ -286,7 +289,8 @@ class DownloadKit(object):
                 kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+            with self._lock:
+                r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
             _do_download(r, mission, False, self._lock)
 
             return
@@ -314,7 +318,6 @@ class DownloadKit(object):
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        # r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
         with self._lock:
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
@@ -370,21 +373,11 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: tuple，第一位为Response或None，第二位为出错信息或'Success'
         """
-        if not url:
-            if self.show_errmsg:
-                raise ValueError('URL为空。')
-            return None, 'URL为空。'
-
-        if mode not in ('get', 'post', 'head'):
-            raise ValueError("mode参数只能是'get'、'post' 或 'head'。")
-
         url = quote(url, safe='/:&?=%;#@+!')
-
-        # 设置referer和host值
-        kwargs_set = set(x.lower() for x in kwargs)
+        kwargs = CaseInsensitiveDict(kwargs)
 
         hostname = urlparse(url).hostname
-        if 'headers' in kwargs_set:
+        if 'headers' in kwargs:
             header_set = set(x.lower() for x in kwargs['headers'])
 
             if 'referer' not in header_set:
@@ -398,8 +391,7 @@ class DownloadKit(object):
             kwargs['headers']['Host'] = hostname
             kwargs['headers']['Referer'] = hostname
 
-        kwargs['stream'] = True
-        if 'timeout' not in kwargs_set:
+        if 'timeout' not in kwargs:
             kwargs['timeout'] = self.timeout
 
         r = e = None
@@ -409,8 +401,6 @@ class DownloadKit(object):
                     r = session.get(url, **kwargs)
                 elif mode == 'post':
                     r = session.post(url, data=data, **kwargs)
-                elif mode == 'head':
-                    r = session.head(url, **kwargs)
 
                 if r:
                     e = 'Success'

@@ -84,7 +84,10 @@ class Mission(object):
     @property
     def rate(self) -> Union[float, None]:
         """返回下载进度百分比"""
-        return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
+        if self.path and self.path.exists():
+            return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
+        else:
+            return
 
     def cancel(self):
         """停止所有task"""
