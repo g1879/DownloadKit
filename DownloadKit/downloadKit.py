@@ -18,7 +18,8 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, BlockSizeSetter
+from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, BlockSizeSetter, \
+    copy_session
 from .mission import Task, Mission
 
 
@@ -289,8 +290,9 @@ class DownloadKit(object):
                 kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            with self._lock:
-                r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+            # with self._lock:
+            #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
             _do_download(r, mission, False, self._lock)
 
             return
@@ -318,8 +320,9 @@ class DownloadKit(object):
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        with self._lock:
-            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        # with self._lock:
+        #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
 
         # -------------------获取文件信息-------------------
         file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
@@ -375,6 +378,7 @@ class DownloadKit(object):
         """
         url = quote(url, safe='/:&?=%;#@+!')
         kwargs = CaseInsensitiveDict(kwargs)
+        session = copy_session(session)
 
         hostname = urlparse(url).hostname
         if 'headers' in kwargs:

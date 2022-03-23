@@ -4,11 +4,29 @@
 @Contact :   g1879@qq.com
 @File    :   common.py
 """
+from copy import copy
 from pathlib import Path
 from re import search, sub
 from typing import Union
 
 from requests import Session
+
+
+def copy_session(s: Session):
+    """复制输入Session对象，返回一个新的"""
+    new = Session()
+    new.headers = s.headers.copy()
+    new.cookies = s.cookies.copy()
+    new.stream = True
+    new.auth = s.auth
+    new.proxies = dict(s.proxies).copy()
+    new.params = copy(s.params)  #
+    new.cert = s.cert
+    new.max_redirects = s.max_redirects
+    new.trust_env = s.trust_env
+    new.verify = s.verify
+
+    return new
 
 
 class BlockSizeSetter(object):
