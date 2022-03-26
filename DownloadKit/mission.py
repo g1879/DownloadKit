@@ -28,6 +28,10 @@ class Mission(object):
         return f'<Mission {self.mid} {self.info} {self.file_name}>'
 
     @property
+    def id(self) -> int:
+        return self._id
+
+    @property
     def mid(self) -> int:
         return self._id
 
@@ -89,8 +93,11 @@ class Mission(object):
         else:
             return
 
-    def cancel(self):
+    def cancel(self, del_file=True) -> None:
         """停止所有task"""
+        if self.state == 'done':
+            return
+
         for task in self.tasks:
             if task.state == 'running':
                 task.state = 'cancel'
@@ -105,10 +112,10 @@ class Mission(object):
         self.result = 'canceled'
         self.info = '已取消'
 
-        while not self.is_done():
-            sleep(.3)
-
-        self.del_file()
+        if del_file:
+            while not self.is_done():
+                sleep(.3)
+            self.del_file()
 
     def del_file(self):
         """删除下载的文件"""
@@ -159,16 +166,13 @@ class Mission(object):
 
 
 class Task(Mission):
-    task_id = 0
-
-    def __init__(self, mission: Mission, range_: Union[list, None]):
+    def __init__(self, mission: Mission, range_: Union[list, None], ID: str):
         super().__init__(0, mission.data)
         self.parent = mission  # 父任务
         self.range = range_  # 分块范围
         self.path = mission.path
         self.file_name = mission.file_name
-        Task.task_id += 1
-        self._id = Task.task_id
+        self._id = ID
 
     def __repr__(self) -> str:
         return f'<Task M{self.mid} T{self._id}  {self.info} {self.file_name}>'

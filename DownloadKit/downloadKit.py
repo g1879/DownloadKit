@@ -225,6 +225,11 @@ class DownloadKit(object):
                 while self.is_running() or (perf_counter() - t1 < timeout or timeout == 0):
                     sleep(0.1)
 
+    def cancel(self):
+        """取消所有等待中或执行中的任务"""
+        for m in self._missions.values():
+            m.cancel(False)
+
     def show(self, asyn: bool = True, keep: bool = False) -> None:
         """实时显示所有线程进度                 \n
         :param asyn: 是否以异步方式显示
@@ -346,19 +351,20 @@ class DownloadKit(object):
             first = True
             chunks = [[s, min(s + self.block_size, file_size)] for s in range(0, file_size, self.block_size)]
             chunks[-1][-1] = ''
+            chunks_len = len(chunks)
 
-            task1 = Task(mission, chunks[0])
-
+            task1 = Task(mission, chunks[0], f'1/{chunks_len}')
             mission.tasks = []
             mission.tasks.append(task1)
 
-            for chunk in chunks[1:]:
-                task = Task(mission, chunk)
+            for ind, chunk in enumerate(chunks[1:], 2):
+                task = Task(mission, chunk, f'{ind}/{chunks_len}')
                 mission.tasks.append(task)
                 self._run_or_wait(task)
 
         else:  # 不分块
-            task1 = Task(mission, None)
+            task1 = Task(mission, None, '1/1')
+            mission.tasks.append(task1)
 
         self._threads[thread_id]['mission'] = task1
         _do_download(r, task1, first, self._lock)
@@ -459,7 +465,17 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
 
     try:
         if first:  # 分块时第一块
-            f.write(next(r.iter_content(chunk_size=task.range[1])))
+            # f.write(next(r.iter_content(chunk_size=task.range[1])))
+            blocks = int(task.range[1] / 65536)
+            remainder = task.range[1] % 65536
+            r_content = r.iter_content(chunk_size=65536)
+            for _ in range(blocks):
+                if task.state in ('cancel', 'done'):
+                    break
+                f.write(next(r_content))
+
+            if remainder and task.state not in ('cancel', 'done'):
+                f.write(next(r_content)[:remainder])
 
         else:
             if task.range:
@@ -471,7 +487,7 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
                     f.write(chunk)
 
     except Exception as e:
-        success, info = False, f'下载失败。{e}'
+        success, info = False, f'下载失败。{r.status_code} {e}'
 
     else:
         success, info = 'success', str(task.path)
