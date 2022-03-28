@@ -123,6 +123,8 @@ class DownloadKit(object):
             elif isinstance(session, (MixPage, SessionPage)):
                 self._session = session.session
                 self._page = session
+                self.retry = session.retry_times
+                self.interval = session.retry_interval
             else:
                 self._session = Drission(driver_or_options=False).session
 
