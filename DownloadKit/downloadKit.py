@@ -4,27 +4,24 @@
 @Contact :   g1879@qq.com
 @File    :   downloadKit.py
 """
-from os import path as os_PATH
 from pathlib import Path
 from queue import Queue
-from random import randint
-from re import search, sub
+from re import sub
 from threading import Thread, Lock
-from time import time, sleep, perf_counter
+from time import sleep, perf_counter
 from typing import Union
-from urllib.parse import quote, urlparse, unquote
+from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from .common import make_valid_name, get_usable_path, SessionSetter, FileExistsSetter, PathSetter, BlockSizeSetter, \
-    copy_session
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, \
+    _set_charset, _get_file_info
 from .mission import Task, Mission
 
 
 class DownloadKit(object):
-    session = SessionSetter()
     file_exists = FileExistsSetter()
     goal_path = PathSetter()
     block_size = BlockSizeSetter()
@@ -38,7 +35,7 @@ class DownloadKit(object):
         """初始化                                                                         \n
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
-        :param session: 使用的Session对象，或配置对象等
+        :param session: 使用的Session对象，或配置对象、页面对象等
         :param timeout: 连接超时时间
         :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'
         """
@@ -47,8 +44,9 @@ class DownloadKit(object):
         self._threads = {i: None for i in range(self._roads)}
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
-        self._stop_printing = False
+        self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
+        self._page = None  # 如果接收MixPage对象则存放于此
 
         self.goal_path: str = goal_path or '.'
         self.retry: int = 3
@@ -57,7 +55,6 @@ class DownloadKit(object):
         self.file_exists: str = file_exists
         self.show_errmsg: bool = False
         self.block_size: Union[str, int] = '20M'  # 分块大小
-
         self.session = session
 
     def __call__(self,
@@ -107,6 +104,30 @@ class DownloadKit(object):
     def waiting_list(self) -> Queue:
         """返回等待队列"""
         return self._waiting_list
+
+    @property
+    def session(self) -> Session:
+        return self._session
+
+    @session.setter
+    def session(self, session) -> None:
+        try:
+            from DrissionPage import Drission, MixPage
+            from DrissionPage.session_page import SessionPage
+            from DrissionPage.config import SessionOptions
+
+            if isinstance(session, SessionOptions):
+                self._session = Drission(driver_or_options=False, session_or_options=session).session
+            elif isinstance(session, Drission):
+                self._session = session.session
+            elif isinstance(session, (MixPage, SessionPage)):
+                self._session = session.session
+                self._page = session
+            else:
+                self._session = Drission(driver_or_options=False).session
+
+        except ImportError:
+            self._session = Session()
 
     def is_running(self) -> bool:
         """检查是否有线程还在运行中"""
@@ -298,7 +319,12 @@ class DownloadKit(object):
             # with self._lock:
             #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
-            _do_download(r, mission, False, self._lock)
+            if r:
+                _do_download(r, mission, False, self._lock)
+            else:
+                _set_result(mission, False, inf, 'done')
+                mission.parent.cancel()
+                _set_result(mission.parent, False, inf, 'done')
 
             return
 
@@ -328,6 +354,10 @@ class DownloadKit(object):
         # with self._lock:
         #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
         r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        if not r:
+            mission.cancel()
+            _set_result(mission, False, inf, 'done')
+            return
 
         # -------------------获取文件信息-------------------
         file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
@@ -391,20 +421,21 @@ class DownloadKit(object):
             header_set = set(x.lower() for x in kwargs['headers'])
 
             if 'referer' not in header_set:
-                kwargs['headers']['Referer'] = hostname
+                kwargs['headers']['Referer'] = self._page.url if self._page is not None else hostname
 
             if 'host' not in header_set:
                 kwargs['headers']['Host'] = hostname
 
         else:
-            kwargs['headers'] = session.headers
-            kwargs['headers']['Host'] = hostname
-            kwargs['headers']['Referer'] = hostname
+            kwargs['headers'] = {
+                'Host': hostname,
+                'Referer': self._page.url if self._page is not None else hostname
+            }
 
         if 'timeout' not in kwargs:
             kwargs['timeout'] = self.timeout
 
-        r = e = None
+        r = None
         for i in range(self.retry + 1):
             try:
                 if mode == 'get':
@@ -425,7 +456,7 @@ class DownloadKit(object):
                 sleep(self.interval)
 
         if r is None:
-            return None, e
+            return None, '连接失败'
 
         if not r.ok:
             return r, f'状态码：{r.status_code}'
@@ -509,136 +540,6 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
     if mission.is_done() and mission.is_success() is False:
         with lock:
             mission.del_file()
-
-
-def _set_charset(response) -> Response:
-    """设置Response对象的编码"""
-    # 在headers中获取编码
-    content_type = response.headers.get('content-type', '').lower()
-    charset = search(r'charset[=: ]*(.*)?[;]', content_type)
-
-    if charset:
-        response.encoding = charset.group(1)
-
-    # 在headers中获取不到编码，且如果是网页
-    elif content_type.replace(' ', '').startswith('text/html'):
-        re_result = search(b'<meta.*?charset=[ \\\'"]*([^"\\\' />]+).*?>', response.content)
-
-        if re_result:
-            charset = re_result.group(1).decode()
-        else:
-            charset = response.apparent_encoding
-
-        response.encoding = charset
-
-    return response
-
-
-def _get_file_info(response,
-                   goal_path: str = None,
-                   rename: str = None,
-                   file_exists: str = None,
-                   lock: Lock = None) -> dict:
-    """获取文件信息，大小单位为byte                   \n
-    包括：size、path、skip
-    :param response: Response对象
-    :param goal_path: 目标文件夹
-    :param rename: 重命名
-    :param file_exists: 存在重名文件时的处理方式
-    :param lock: 线程锁
-    :return: 文件名、文件大小、保存路径、是否跳过
-    """
-    # ------------获取文件大小------------
-    file_size = response.headers.get('Content-Length', None)
-    file_size = None if file_size is None else int(file_size)
-
-    # ------------获取网络文件名------------
-    file_name = _get_file_name(response)
-
-    # ------------获取保存路径------------
-    goal_Path = Path(goal_path)
-    # 按windows规则去除路径中的非法字符
-    goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
-    goal_Path = Path(goal_path).absolute()
-    goal_Path.mkdir(parents=True, exist_ok=True)
-
-    # ------------获取保存文件名------------
-    # -------------------重命名，不改变扩展名-------------------
-    if rename:
-        ext_name = file_name.split('.')[-1]
-        if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
-            full_name = rename
-        else:
-            full_name = f'{rename}.{ext_name}'
-    else:
-        full_name = file_name
-
-    full_name = make_valid_name(full_name)
-
-    # -------------------生成路径-------------------
-    skip = False
-    full_path = goal_Path / full_name
-
-    with lock:
-        if full_path.exists():
-            if file_exists == 'rename':
-                full_path = get_usable_path(full_path)
-
-            elif file_exists == 'skip':
-                skip = True
-
-            elif file_exists == 'overwrite':
-                full_path.unlink()
-
-        if not skip:
-            with open(full_path, 'wb'):
-                pass
-
-    return {'size': file_size,
-            'path': full_path,
-            'skip': skip}
-
-
-def _get_file_name(response) -> str:
-    """从headers或url中获取文件名，如果获取不到，生成一个随机文件名
-    :param response: 返回的response
-    :return: 下载文件的文件名
-    """
-    file_name = ''
-    charset = ''
-    content_disposition = response.headers.get('content-disposition', '').replace(' ', '')
-
-    # 使用header里的文件名
-    if content_disposition:
-        txt = search(r'filename\*="?([^";]+)', content_disposition)
-        if txt:  # 文件名自带编码方式
-            txt = txt.group(1).split("''", 1)
-            if len(txt) == 2:
-                charset, file_name = txt
-            else:
-                file_name = txt[0]
-
-        else:  # 文件名没带编码方式
-            txt = search(r'filename="?([^";]+)', content_disposition)
-            if txt:
-                file_name = txt.group(1)
-
-                # 获取编码（如有）
-                charset = response.encoding
-
-        file_name = file_name.strip("'")
-
-    # 在url里获取文件名
-    if not file_name and os_PATH.basename(response.url):
-        file_name = os_PATH.basename(response.url).split("?")[0]
-
-    # 找不到则用时间和随机数生成文件名
-    if not file_name:
-        file_name = f'untitled_{time()}_{randint(0, 100)}'
-
-    # 去除非法字符
-    charset = charset or 'utf-8'
-    return unquote(file_name, charset)
 
 
 def _set_result(mission, res, info, state):
