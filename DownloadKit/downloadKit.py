@@ -76,14 +76,13 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
         """
-        mission = self.add(file_url=file_url,
-                           goal_path=goal_path,
-                           rename=rename,
-                           file_exists=file_exists,
-                           post_data=post_data,
-                           split=False,
-                           **kwargs)
-        return self.wait(mission, show=show_msg)
+        return self.add(file_url=file_url,
+                        goal_path=goal_path,
+                        rename=rename,
+                        file_exists=file_exists,
+                        post_data=post_data,
+                        split=False,
+                        **kwargs).wait(show=show_msg)
 
     @property
     def roads(self) -> int:
@@ -418,26 +417,25 @@ class DownloadKit(object):
         kwargs = CaseInsensitiveDict(kwargs)
         session = copy_session(session)
 
-        hostname = urlparse(url).hostname
-        if 'headers' in kwargs:
-            header_set = set(x.lower() for x in kwargs['headers'])
-
-            if 'referer' not in header_set:
-                kwargs['headers']['Referer'] = self._page.url if self._page is not None else hostname
-
-            if 'host' not in header_set:
-                kwargs['headers']['Host'] = hostname
-
+        if 'headers' not in kwargs:
+            kwargs['headers'] = {}
         else:
-            kwargs['headers'] = {
-                'Host': hostname,
-                'Referer': self._page.url if self._page is not None else hostname
-            }
+            kwargs['headers'] = CaseInsensitiveDict(kwargs['headers'])
 
-        if 'timeout' not in kwargs:
+        # 设置referer、host和timeout值
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname
+        scheme = parsed_url.scheme
+        if not _check_headers(kwargs, self.session.headers, 'Referer'):
+            kwargs['headers']['Referer'] = self._page.url if self._page is not None else f'{scheme}://{hostname}'
+        if 'Host' not in kwargs['headers']:
+            kwargs['headers']['Host'] = hostname
+
+        if not _check_headers(kwargs, self.session.headers, 'timeout'):
             kwargs['timeout'] = self.timeout
 
-        r = None
+        # 执行连接
+        r = err = None
         for i in range(self.retry + 1):
             try:
                 if mode == 'get':
@@ -446,20 +444,20 @@ class DownloadKit(object):
                     r = session.post(url, data=data, **kwargs)
 
                 if r:
-                    e = 'Success'
-                    r = _set_charset(r)
-                    return r, e
+                    return _set_charset(r), 'Success'
 
             except Exception as e:
-                if self.show_errmsg:
-                    raise e
+                err = e
+
+            if r and r.status_code in (403, 404):
+                break
 
             if i < self.retry:
                 sleep(self.interval)
 
+        # 返回失败结果
         if r is None:
-            return None, '连接失败'
-
+            return None, '连接失败' if err is None else err
         if not r.ok:
             return r, f'状态码：{r.status_code}'
 
@@ -548,3 +546,8 @@ def _set_result(mission, res, info, state):
     mission.result = res
     mission.info = info
     mission.state = state
+
+
+def _check_headers(kwargs, headers: Union[dict, CaseInsensitiveDict], arg: str) -> bool:
+    """检查kwargs或headers中是否有arg所示属性"""
+    return arg in kwargs['headers'] or arg in headers
