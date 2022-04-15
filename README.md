@@ -163,7 +163,6 @@ d.file_exists = 'skip'
 
 - file_url：文件网址
 - goal_path：保存路径
-- session：用于下载的Session对象，默认使用实例属性的
 - rename：重命名的文件名
 - file_exists：遇到同名文件时的处理方式，可选`'skip'`,`'overwrite'`,`'rename'`，默认跟随实例属性
 - post_data：post 方式使用的数据
@@ -194,7 +193,7 @@ from requests import Session
 from DownloadKit import DownloadKit
 
 session = Session()
-session.headers={xxxx: xxxx}
+session.headers={'xxxx': 'xxxx'}
 d = DownloadKit(session=session)
 ```
 

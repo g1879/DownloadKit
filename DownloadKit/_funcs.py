@@ -67,6 +67,7 @@ class PathSetter(object):
 
 class FileExistsSetter(object):
     def __set__(self, file_exists, mode):
+        mode = mode.lower()
         if mode not in ('skip', 'overwrite', 'rename'):
             raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
         file_exists._file_exists = mode

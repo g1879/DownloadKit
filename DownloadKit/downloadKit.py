@@ -30,13 +30,11 @@ class DownloadKit(object):
                  goal_path: Union[str, Path] = None,
                  roads: int = 10,
                  session=None,
-                 timeout: float = None,
                  file_exists: str = 'rename'):
         """初始化                                                                         \n
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
         :param session: 使用的Session对象，或配置对象、页面对象等
-        :param timeout: 连接超时时间
         :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'
         """
         self._roads = roads
@@ -47,14 +45,14 @@ class DownloadKit(object):
         self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
         self._page = None  # 如果接收MixPage对象则存放于此
+        self._retry = None
+        self._interval = None
+        self._timeout = None
 
         self.goal_path: str = goal_path or '.'
-        self.retry: int = 3
-        self.interval: float = 5
-        self.timeout: float = timeout if timeout is not None else 20
         self.file_exists: str = file_exists
         self.show_errmsg: bool = False
-        self.block_size: Union[str, int] = '20M'  # 分块大小
+        self.block_size: Union[str, int] = '50M'  # 分块大小
         self.session = session
 
     def __call__(self,
@@ -68,7 +66,6 @@ class DownloadKit(object):
         """以阻塞的方式下载一个文件并返回结果，主要用于兼容旧版DrissionPage                                     \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
-        :param session: 用于下载的Session对象，默认使用实例属性的
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
@@ -91,13 +88,64 @@ class DownloadKit(object):
 
     @roads.setter
     def roads(self, val: int) -> None:
-        """设置roads值"""
+        """设置可同时运行的线程数"""
         if self.is_running():
             print('有任务未完成时不能改变roads。')
             return
         if val != self._roads:
             self._roads = val
             self._threads = {i: None for i in range(self._roads)}
+
+    @property
+    def retry(self) -> int:
+        """返回连接失败时重试次数"""
+        if self._retry is not None:
+            return self._retry
+        elif self._page is not None:
+            return self._page.retry_times
+        else:
+            return 3
+
+    @retry.setter
+    def retry(self, times: int) -> None:
+        """设置连接失败时重试次数"""
+        if not isinstance(times, int) or times < 0:
+            raise TypeError('times参数只能接受int格式且不能小于0。')
+        self._retry = times
+
+    @property
+    def interval(self) -> float:
+        """返回连接失败时重试间隔"""
+        if self._interval is not None:
+            return self._interval
+        elif self._page is not None:
+            return self._page.retry_interval
+        else:
+            return 5
+
+    @interval.setter
+    def interval(self, seconds: float) -> None:
+        """设置连接失败时重试间隔"""
+        if not isinstance(seconds, float) or seconds < 0:
+            raise TypeError('seconds参数只能接受float格式且不能小于0。')
+        self._interval = seconds
+
+    @property
+    def timeout(self) -> float:
+        """返回连接超时时间"""
+        if self._timeout is not None:
+            return self._timeout
+        elif self._page is not None:
+            return self._page.timeout
+        else:
+            return 20
+
+    @timeout.setter
+    def timeout(self, seconds: float) -> None:
+        """设置连接超时时间"""
+        if not isinstance(seconds, float) or seconds < 0:
+            raise TypeError('seconds参数只能接受float格式且不能小于0。')
+        self._timeout = seconds
 
     @property
     def waiting_list(self) -> Queue:
@@ -122,8 +170,6 @@ class DownloadKit(object):
             elif isinstance(session, (MixPage, SessionPage)):
                 self._session = session.session
                 self._page = session
-                self.retry = session.retry_times
-                self.interval = session.retry_interval
             else:
                 self._session = Drission(driver_or_options=False).session
 
@@ -137,7 +183,6 @@ class DownloadKit(object):
     def add(self,
             file_url: str,
             goal_path: Union[str, Path] = None,
-            session: Session = None,
             rename: str = None,
             file_exists: str = None,
             post_data: Union[str, dict] = None,
@@ -146,7 +191,6 @@ class DownloadKit(object):
         """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
         :param goal_path: 保存路径
-        :param session: 用于下载的Session对象，默认使用实例属性的
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
@@ -154,11 +198,10 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务对象
         """
-        session = session or self.session
-        session.stream = True
+        self.session.stream = True
         data = {'file_url': file_url,
                 'goal_path': str(goal_path or self.goal_path),
-                'session': session,
+                'session': self.session,
                 'rename': rename,
                 'file_exists': file_exists or self.file_exists,
                 'post_data': post_data,
@@ -168,7 +211,6 @@ class DownloadKit(object):
         mission = Mission(self._missions_num, data)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
-        # sleep(.1)
         return mission
 
     def _run_or_wait(self, mission: Mission):
@@ -182,10 +224,10 @@ class DownloadKit(object):
             self._waiting_list.put(mission)
 
     def _run(self, ID: int, mission: Mission) -> None:
-        """
+        """线程函数                                 \n
         :param ID: 线程id
         :param mission: 任务对象，Mission或Task
-        :return:
+        :return: None
         """
         while True:
             if not mission:  # 如果没有任务，就从等候列表中取一个
@@ -212,6 +254,10 @@ class DownloadKit(object):
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
     def get_failed_missions(self, save_to: Union[str, Path] = None) -> list:
+        """返回失败任务列表，可保存到文件，支持csv、xlsx、txt、json格式     \n
+        :param save_to: 保存文件的路径
+        :return: 失败任务列表
+        """
         lst = [i for i in self._missions.values() if i.result is False]
         if save_to:
             lst = [{'url': i.data['file_url'],
@@ -317,9 +363,8 @@ class DownloadKit(object):
                 kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            # with self._lock:
-            #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
             r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+
             if r:
                 _do_download(r, mission, False, self._lock)
             else:
@@ -352,9 +397,8 @@ class DownloadKit(object):
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        # with self._lock:
-        #     r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
         r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+
         if not r:
             mission.cancel()
             _set_result(mission, False, inf, 'done')
@@ -451,7 +495,6 @@ class DownloadKit(object):
 
             if r and r.status_code in (403, 404):
                 break
-
             if i < self.retry:
                 sleep(self.interval)
 
@@ -467,7 +510,8 @@ class DownloadKit(object):
             if v is None:
                 return k
 
-    def _stop_show(self):
+    def _stop_show(self) -> None:
+        """设置停止打印的变量"""
         input()
         self._stop_printing = True
 
@@ -542,7 +586,11 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
             mission.del_file()
 
 
-def _set_result(mission, res, info, state):
+def _set_result(mission: Mission,
+                res: Union[bool, None, str],
+                info: str,
+                state: str) -> None:
+    """设置任务结果值"""
     mission.result = res
     mission.info = info
     mission.state = state
