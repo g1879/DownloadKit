@@ -426,12 +426,12 @@ class DownloadKit(object):
         parsed_url = urlparse(url)
         hostname = parsed_url.hostname
         scheme = parsed_url.scheme
-        if not _check_headers(kwargs, self.session.headers, 'Referer'):
+
+        if not ('Referer' in kwargs['headers'] or 'Referer' in self.session.headers):
             kwargs['headers']['Referer'] = self._page.url if self._page is not None else f'{scheme}://{hostname}'
         if 'Host' not in kwargs['headers']:
             kwargs['headers']['Host'] = hostname
-
-        if not _check_headers(kwargs, self.session.headers, 'timeout'):
+        if not ('timeout' in kwargs['headers'] or 'timeout' in self.session.headers):
             kwargs['timeout'] = self.timeout
 
         # 执行连接
@@ -546,8 +546,3 @@ def _set_result(mission, res, info, state):
     mission.result = res
     mission.info = info
     mission.state = state
-
-
-def _check_headers(kwargs, headers: Union[dict, CaseInsensitiveDict], arg: str) -> bool:
-    """检查kwargs或headers中是否有arg所示属性"""
-    return arg in kwargs['headers'] or arg in headers
