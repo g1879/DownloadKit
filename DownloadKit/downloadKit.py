@@ -123,10 +123,10 @@ class DownloadKit(object):
             return 5
 
     @interval.setter
-    def interval(self, seconds: float) -> None:
+    def interval(self, seconds: Union[int, float]) -> None:
         """设置连接失败时重试间隔"""
-        if not isinstance(seconds, float) or seconds < 0:
-            raise TypeError('seconds参数只能接受float格式且不能小于0。')
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
         self._interval = seconds
 
     @property
@@ -140,10 +140,10 @@ class DownloadKit(object):
             return 20
 
     @timeout.setter
-    def timeout(self, seconds: float) -> None:
+    def timeout(self, seconds: Union[int, float]) -> None:
         """设置连接超时时间"""
-        if not isinstance(seconds, float) or seconds < 0:
-            raise TypeError('seconds参数只能接受float格式且不能小于0。')
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
         self._timeout = seconds
 
     @property
@@ -257,11 +257,11 @@ class DownloadKit(object):
         """
         lst = [i for i in self._missions.values() if i.result is False]
         if save_to:
-            lst = [{'url': i.data['file_url'],
-                    'path': i.data['goal_path'],
-                    'rename': i.data['rename'],
-                    'post_data': i.data['post_data'],
-                    'kwargs': i.data['kwargs']}
+            lst = [{'url': i.data.url,
+                    'path': i.data.goal_path,
+                    'rename': i.data.rename,
+                    'post_data': i.data.post_data,
+                    'kwargs': i.data.kwargs}
                    for i in lst]
             r = Recorder(save_to, cache_size=0)
             r.add_data(lst)
