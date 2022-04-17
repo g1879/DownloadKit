@@ -16,9 +16,8 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, \
-    _set_charset, _get_file_info
-from .mission import Task, Mission
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, _set_charset, _get_file_info
+from .mission import Task, Mission, MissionData
 
 
 class DownloadKit(object):
@@ -198,15 +197,13 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务对象
         """
-        self.session.stream = True
-        data = {'file_url': file_url,
-                'goal_path': str(goal_path or self.goal_path),
-                'session': self.session,
-                'rename': rename,
-                'file_exists': file_exists or self.file_exists,
-                'post_data': post_data,
-                'split': split,
-                'kwargs': kwargs}
+        data = MissionData(url=file_url,
+                           goal_path=str(goal_path or self.goal_path),
+                           rename=rename,
+                           file_exists=file_exists or self.file_exists,
+                           post_data=post_data,
+                           split=split,
+                           kwargs=kwargs)
         self._missions_num += 1
         mission = Mission(self._missions_num, data)
         self._missions[self._missions_num] = mission
@@ -350,10 +347,9 @@ class DownloadKit(object):
             mission.state = 'done'
             return
 
-        file_url = mission.data['file_url']
-        session: Session = mission.data['session']
-        post_data = mission.data['post_data']
-        kwargs = mission.data['kwargs']
+        file_url = mission.data.url
+        post_data = mission.data.post_data
+        kwargs = mission.data.kwargs
 
         if isinstance(mission, Task):
             kwargs = CaseInsensitiveDict(kwargs)
@@ -363,7 +359,7 @@ class DownloadKit(object):
                 kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+            r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
 
             if r:
                 _do_download(r, mission, False, self._lock)
@@ -378,10 +374,10 @@ class DownloadKit(object):
         mission.info = '下载中'
         mission.state = 'running'
 
-        rename = mission.data['rename']
-        goal_path = mission.data['goal_path']
-        file_exists = mission.data['file_exists']
-        split = mission.data['split']
+        rename = mission.data.rename
+        goal_path = mission.data.goal_path
+        file_exists = mission.data.file_exists
+        split = mission.data.split
 
         goal_Path = Path(goal_path)
         # 按windows规则去除路径中的非法字符
@@ -397,7 +393,7 @@ class DownloadKit(object):
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        r, inf = self._make_response(file_url, session=session, mode=mode, data=post_data, **kwargs)
+        r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
 
         if not r:
             mission.cancel()
@@ -444,12 +440,11 @@ class DownloadKit(object):
         self._threads[thread_id]['mission'] = task1
         _do_download(r, task1, first, self._lock)
 
-    def _make_response(self,
-                       url: str,
-                       session: Session,
-                       mode: str = 'get',
-                       data: Union[dict, str] = None,
-                       **kwargs) -> tuple:
+    def _connect(self,
+                 url: str,
+                 mode: str = 'get',
+                 data: Union[dict, str] = None,
+                 **kwargs) -> tuple:
         """生成response对象                                                   \n
         :param url: 目标url
         :param mode: 'get', 'post' 中选择
@@ -459,7 +454,7 @@ class DownloadKit(object):
         """
         url = quote(url, safe='/:&?=%;#@+!')
         kwargs = CaseInsensitiveDict(kwargs)
-        session = copy_session(session)
+        session = copy_session(self.session)
 
         if 'headers' not in kwargs:
             kwargs['headers'] = {}

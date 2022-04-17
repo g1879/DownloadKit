@@ -4,16 +4,34 @@ from time import sleep, perf_counter
 from typing import Union
 
 
+class MissionData(object):
+    """保存任务数据的对象"""
+    def __init__(self, url: str,
+                 goal_path: Union[str, Path],
+                 rename: Union[str, None],
+                 file_exists: str,
+                 post_data: Union[str, dict, None],
+                 split: bool,
+                 kwargs: dict):
+        self.url = url
+        self.goal_path = goal_path
+        self.rename = rename
+        self.file_exists = file_exists
+        self.post_data = post_data
+        self.split = split
+        self.kwargs = kwargs
+
+
 class Mission(object):
     """任务对象"""
 
-    def __init__(self, ID: int, data: dict):
+    def __init__(self, ID: int, data: MissionData):
         """初始化                               \n
         :param ID: 任务id
         :param data: 任务数据
         """
         self._id = ID
-        self.data = data
+        self.data: MissionData = data
         self.state = 'waiting'  # 'waiting'、'running'、'done'
         self.size = None
         self.info = '等待下载'
@@ -132,7 +150,7 @@ class Mission(object):
         :return: 任务结果和信息组成的tuple
         """
         if show:
-            print(f'url：{self.data["file_url"]}')
+            print(f'url：{self.data.url}')
             t2 = perf_counter()
             while self.file_name is None and perf_counter() - t2 < 4:
                 sleep(0.01)
