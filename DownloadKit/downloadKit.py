@@ -416,6 +416,8 @@ class DownloadKit(object):
             _set_result(mission, False, inf, 'done')
             return
 
+        mission.recorder.set_path(full_path)
+
         # -------------------设置分块任务-------------------
         first = False
         if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
@@ -526,35 +528,40 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
     task.state = 'running'
     task.info = '下载中'
 
-    while True:  # 争夺文件读写权限
-        try:
-            f = open(task.path, 'rb+')
-            break
-        except PermissionError:
-            sleep(.2)
+    # while True:  # 争夺文件读写权限
+    #     try:
+    #         f = open(task.path, 'rb+')
+    #         break
+    #     except PermissionError:
+    #         sleep(.2)
 
     try:
+        print(task.range)
         if first:  # 分块时第一块
-            # f.write(next(r.iter_content(chunk_size=task.range[1])))
-            blocks = int(task.range[1] / 65536)
-            remainder = task.range[1] % 65536
-            r_content = r.iter_content(chunk_size=65536)
-            for _ in range(blocks):
-                if task.state in ('cancel', 'done'):
-                    break
-                f.write(next(r_content))
-
-            if remainder and task.state not in ('cancel', 'done'):
-                f.write(next(r_content)[:remainder])
+            r_content = r.iter_content(chunk_size=task.range[1])
+            task.parent.recorder.add_data(next(r_content), 0)
+            # blocks = int(task.range[1] / 65536)
+            # remainder = task.range[1] % 65536
+            # r_content = r.iter_content(chunk_size=65536)
+            # for _ in range(blocks):
+            #     if task.state in ('cancel', 'done'):
+            #         break
+            #     f.write(next(r_content))
+            #
+            # if remainder and task.state not in ('cancel', 'done'):
+            #     f.write(next(r_content)[:remainder])
 
         else:
-            if task.range:
-                f.seek(task.range[0])
+            # if task.range:
+            #     f.seek(task.range[0])
+            seek = task.range[0] if task.range else 0
             for chunk in r.iter_content(chunk_size=65536):
                 if task.state in ('cancel', 'done'):
                     break
                 if chunk:
-                    f.write(chunk)
+                    # f.write(chunk)
+                    task.parent.recorder.add_data(chunk, seek=seek)
+                    seek += 65536
 
     except Exception as e:
         success, info = False, f'下载失败。{r.status_code} {e}'
@@ -563,7 +570,7 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
         success, info = 'success', str(task.path)
 
     finally:
-        f.close()
+        # f.close()
         r.close()
 
     task.state = 'done'

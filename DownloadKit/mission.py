@@ -3,9 +3,12 @@ from pathlib import Path
 from time import sleep, perf_counter
 from typing import Union
 
+from DataRecorder import ByteRecorder
+
 
 class MissionData(object):
     """保存任务数据的对象"""
+
     def __init__(self, url: str,
                  goal_path: Union[str, Path],
                  rename: Union[str, None],
@@ -41,6 +44,7 @@ class Mission(object):
 
         self.file_name = None
         self._path: Union[Path, None] = None  # 文件完整路径，Path对象
+        self.recorder: ByteRecorder = ByteRecorder(cache_size=50)
 
     def __repr__(self) -> str:
         return f'<Mission {self.mid} {self.info} {self.file_name}>'
@@ -99,6 +103,7 @@ class Mission(object):
             if not self.size:
                 self.info = str(self.path)
             self.state = 'done'
+            self.recorder.record()
             return True
 
         return False
@@ -129,6 +134,8 @@ class Mission(object):
 
         self.result = 'canceled'
         self.info = '已取消'
+
+        self.recorder.clear()
 
         if del_file:
             while not self.is_done():
