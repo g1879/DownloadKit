@@ -44,30 +44,42 @@ class Mission(object):
 
         self.file_name = None
         self._path: Union[Path, None] = None  # 文件完整路径，Path对象
-        self.recorder: ByteRecorder = ByteRecorder(cache_size=50)
+        self._recorder = None
 
     def __repr__(self) -> str:
         return f'<Mission {self.mid} {self.info} {self.file_name}>'
 
     @property
     def id(self) -> int:
+        """返回任务id"""
         return self._id
 
     @property
     def mid(self) -> int:
+        """返回父任务id"""
         return self._id
 
     @property
-    def path(self):
+    def path(self) -> Union[str, Path]:
+        """返回文件保存路径"""
         return self._path
 
     @path.setter
-    def path(self, path: Union[str, Path, None]):
+    def path(self, path: Union[str, Path, None]) -> None:
+        """设置文件保存路径"""
         if isinstance(path, (Path, str)):
             path = Path(path)
             self.file_name = path.name
 
         self._path = path
+
+    @property
+    def recorder(self) -> ByteRecorder:
+        """返回记录器对象"""
+        if self._recorder is None:
+            self._recorder = ByteRecorder(cache_size=100)
+            self._recorder.show_msg = False
+        return self._recorder
 
     def is_success(self) -> Union[bool, None]:
         """检查下载是否成功"""
@@ -204,12 +216,15 @@ class Task(Mission):
 
     @property
     def is_done(self) -> bool:
+        """返回子任务是否结束"""
         return self.state == 'done'
 
     @property
-    def is_success(self):
+    def is_success(self) -> bool:
+        """返回子任务是否成功"""
         return True if self.result else False
 
     @property
     def mid(self) -> int:
+        """返回父任务id"""
         return self.parent.mid
