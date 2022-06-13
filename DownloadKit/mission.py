@@ -128,6 +128,10 @@ class Mission(object):
         else:
             return
 
+    def add_data(self, data, seek) -> None:
+        """把数据输入到记录器"""
+        self.recorder.add_data(data, seek)
+
     def cancel(self, del_file=True) -> None:
         """停止所有task"""
         if self.state == 'done':
@@ -228,3 +232,7 @@ class Task(Mission):
     def mid(self) -> int:
         """返回父任务id"""
         return self.parent.mid
+
+    @property
+    def recorder(self) -> ByteRecorder:
+        return self.parent.recorder

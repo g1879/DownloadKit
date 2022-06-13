@@ -532,7 +532,7 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
     try:
         if first:  # 分块时第一块
             r_content = r.iter_content(chunk_size=task.range[1])
-            task.parent.recorder.add_data(next(r_content), 0)
+            task.add_data(next(r_content), 0)
 
         else:
             if task.range is None:  # 不分块
@@ -540,25 +540,25 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
                     if task.state in ('cancel', 'done'):
                         break
                     if chunk:
-                        task.parent.recorder.add_data(chunk)
+                        task.add_data(chunk, None)
 
-            elif isinstance(task.range[1], str):  # 结尾的数据块
+            elif task.range[1] == '':  # 结尾的数据块
                 begin = task.range[0]
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
                         break
                     if chunk:
-                        task.parent.recorder.add_data(chunk, seek=begin)
+                        task.add_data(chunk, seek=begin)
                         begin += len(chunk)
 
-            else:  # 有起始数字的数据块
+            else:  # 有始末数字的数据块
                 begin, end = task.range
                 num = (end - begin) // block_size
                 for ind, chunk in enumerate(r.iter_content(chunk_size=block_size), 1):
                     if task.state in ('cancel', 'done'):
                         break
                     if chunk:
-                        task.parent.recorder.add_data(chunk, seek=begin)
+                        task.add_data(chunk, seek=begin)
                         if ind <= num:
                             begin += block_size
 
