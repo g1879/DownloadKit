@@ -17,7 +17,7 @@ from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
 from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, _set_charset, _get_file_info
-from .mission import Task, Mission, MissionData
+from .mission import Task, Mission, MissionData, BaseTask
 
 
 class DownloadKit(object):
@@ -210,7 +210,7 @@ class DownloadKit(object):
         self._run_or_wait(mission)
         return mission
 
-    def _run_or_wait(self, mission: Mission):
+    def _run_or_wait(self, mission: BaseTask):
         """接收任务，有空线程则运行，没有则进入等待队列"""
         thread_id = self._get_usable_thread()
         if thread_id is not None:
@@ -220,7 +220,7 @@ class DownloadKit(object):
         else:
             self._waiting_list.put(mission)
 
-    def _run(self, ID: int, mission: Mission) -> None:
+    def _run(self, ID: int, mission: BaseTask) -> None:
         """线程函数                                 \n
         :param ID: 线程id
         :param mission: 任务对象，Mission或Task
@@ -320,7 +320,7 @@ class DownloadKit(object):
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
                 if m:
-                    rate = m.parent.rate if isinstance(m, Task) else m.rate if m else ''
+                    rate = m.mission.rate if isinstance(m, Task) else m.rate if m else ''
                     path = f'M{m.mid} {rate}% {m}'
                 else:
                     path = '空闲'
@@ -337,40 +337,44 @@ class DownloadKit(object):
 
         print()
 
-    def _download(self, mission: Mission, thread_id: int) -> None:
+    def _download(self,
+                  mission_or_task: Union[Mission, Task],
+                  thread_id: int) -> None:
         """此方法是执行下载的线程方法，用于根据任务下载文件     \n
-        :param mission: 下载任务对象
+        :param mission_or_task: 下载任务对象
         :param thread_id: 线程号
         :return: None
         """
-        if mission.state in ('cancel', 'done'):
-            mission.state = 'done'
+        if mission_or_task.is_done:
+            return
+        if mission_or_task.state == 'cancel':
+            mission_or_task.state = 'done'
             return
 
-        file_url = mission.data.url
-        post_data = mission.data.post_data
-        kwargs = mission.data.kwargs
+        file_url = mission_or_task.data.url
+        post_data = mission_or_task.data.post_data
+        kwargs = mission_or_task.data.kwargs
 
-        if isinstance(mission, Task):
+        if isinstance(mission_or_task, Task):
+            task = mission_or_task
             kwargs = CaseInsensitiveDict(kwargs)
             if 'headers' not in kwargs:
-                kwargs['headers'] = {'Range': f"bytes={mission.range[0]}-{mission.range[1]}"}
+                kwargs['headers'] = {'Range': f"bytes={task.range[0]}-{task.range[1]}"}
             else:
-                kwargs['headers']['Range'] = f"bytes={mission.range[0]}-{mission.range[1]}"
+                kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
 
             mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
             r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
 
             if r:
-                _do_download(r, mission, False, self._lock)
+                _do_download(r, task, False)
             else:
-                _set_result(mission, False, inf, 'done')
-                mission.parent.cancel()
-                _set_result(mission.parent, False, inf, 'done')
+                task.set_done(False, inf)
 
             return
 
         # ===================开始处理mission====================
+        mission = mission_or_task
         mission.info = '下载中'
         mission.state = 'running'
 
@@ -389,15 +393,14 @@ class DownloadKit(object):
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
             mission.path = goal_Path / rename
-            _set_result(mission, 'skip', str(mission.path), 'done')
+            mission.set_states('skip', str(mission.path), 'done')
             return
 
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
         r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
 
         if not r:
-            mission.cancel()
-            _set_result(mission, False, inf, 'done')
+            mission.cancel(del_file=True, result=False, info=inf)
             return
 
         # -------------------获取文件信息-------------------
@@ -409,14 +412,12 @@ class DownloadKit(object):
         mission.size = file_size
 
         if file_info['skip']:
-            _set_result(mission, 'skip', full_path, 'done')
+            mission.set_states('skip', str(mission.path), 'done')
             return
 
         if not r:
-            _set_result(mission, False, inf, 'done')
+            mission.cancel(del_file=True, result=False, info=inf)
             return
-
-        mission.recorder.set_path(full_path)
 
         # -------------------设置分块任务-------------------
         first = False
@@ -427,6 +428,7 @@ class DownloadKit(object):
             chunks_len = len(chunks)
 
             task1 = Task(mission, chunks[0], f'1/{chunks_len}')
+            mission.tasks_count = chunks_len
             mission.tasks = []
             mission.tasks.append(task1)
 
@@ -440,7 +442,7 @@ class DownloadKit(object):
             mission.tasks.append(task1)
 
         self._threads[thread_id]['mission'] = task1
-        _do_download(r, task1, first, self._lock)
+        _do_download(r, task1, first)
 
     def _connect(self,
                  url: str,
@@ -513,20 +515,17 @@ class DownloadKit(object):
         self._stop_printing = True
 
 
-def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None):
+def _do_download(r: Response, task: Task, first: bool = False):
     """执行下载任务                                    \n
     :param r: Response对象
     :param task: 任务
     :param first: 是否第一个分块
-    :param lock: 线程锁
     :return: None
     """
-    if task.state in ('cancel', 'done'):
-        task.state = 'done'
+    if task.is_done:
         return
 
-    task.state = 'running'
-    task.info = '下载中'
+    task.set_states(result=None, info='下载中', state='running')
     block_size = 65536  # 64k
 
     try:
@@ -571,26 +570,4 @@ def _do_download(r: Response, task: Task, first: bool = False, lock: Lock = None
     finally:
         r.close()
 
-    task.state = 'done'
-    task.result = success
-    task.info = info
-    mission = task.parent
-
-    if not success:
-        mission.cancel()
-        mission.result = success
-        mission.info = info
-
-    if mission.is_done() and mission.is_success() is False:
-        with lock:
-            mission.del_file()
-
-
-def _set_result(mission: Mission,
-                res: Union[bool, None, str],
-                info: str,
-                state: str) -> None:
-    """设置任务结果值"""
-    mission.result = res
-    mission.info = info
-    mission.state = state
+    task.set_done(result=success, info=info)

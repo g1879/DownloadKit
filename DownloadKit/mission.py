@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 from pathlib import Path
 from time import sleep, perf_counter
-from typing import Union
+from typing import Union, List
 
 from DataRecorder import ByteRecorder
 
@@ -25,7 +25,35 @@ class MissionData(object):
         self.kwargs = kwargs
 
 
-class Mission(object):
+class BaseTask(object):
+    _DONE = 'done'
+
+    def __init__(self, ID: Union[int, str]):
+        self._id = ID
+        self.state = 'waiting'  # 状态：'waiting'、'running'、'done'
+        self.result = None  # 结果：'success'、'skip'、'cancel'、False、None
+        self.info = '等待下载'  # 信息
+
+    @property
+    def data(self):
+        return
+
+    @property
+    def is_done(self) -> bool:
+        """返回子任务是否结束"""
+        return self.state == self._DONE
+
+    def set_states(self,
+                   result: Union[bool, None, str] = None,
+                   info: str = None,
+                   state: str = 'done') -> None:
+        """设置任务结果值"""
+        self.result = result
+        self.info = info
+        self.state = state
+
+
+class Mission(BaseTask):
     """任务对象"""
 
     def __init__(self, ID: int, data: MissionData):
@@ -33,14 +61,13 @@ class Mission(object):
         :param ID: 任务id
         :param data: 任务数据
         """
-        self._id = ID
-        self.data: MissionData = data
-        self.state = 'waiting'  # 'waiting'、'running'、'done'
+        super().__init__(ID)
+        self._data: MissionData = data
         self.size = None
-        self.info = '等待下载'
-        self.result = None  # 'success'、'skip'、False和None四种情况
 
-        self.tasks = []  # 多线程下载单个文件时的子任务
+        self.tasks: List[Task] = []  # 多线程下载单个文件时的子任务
+        self.tasks_count = 1
+        self.done_tasks_count = 0
 
         self.file_name = None
         self._path: Union[Path, None] = None  # 文件完整路径，Path对象
@@ -60,6 +87,10 @@ class Mission(object):
         return self._id
 
     @property
+    def data(self) -> MissionData:
+        return self._data
+
+    @property
     def path(self) -> Union[str, Path]:
         """返回文件保存路径"""
         return self._path
@@ -72,6 +103,7 @@ class Mission(object):
             self.file_name = path.name
 
         self._path = path
+        self.recorder.set_path(path)
 
     @property
     def recorder(self) -> ByteRecorder:
@@ -84,41 +116,10 @@ class Mission(object):
     def is_success(self) -> Union[bool, None]:
         """检查下载是否成功"""
         if self.result is not None:  # 已有结果，直接返回
-            return self.result
+            return False if self.result is False else True
 
         if not self.is_done:  # 未完成，返回None表示未知
             return None
-
-        result = None
-        if self.size:  # 有size，可返回True或False
-            if self.path.stat().st_size >= self.size:
-                self.info = str(self.path)
-                result = 'success'
-            else:
-                self.info = '下载失败'
-                result = False
-
-        else:  # 无size，返回None或False
-            if any((i.result is False for i in self.tasks)):
-                self.info = '下载失败'
-                result = False
-
-        self.result = result
-        return result
-
-    def is_done(self) -> bool:
-        """检查任务是否完成"""
-        if self.state == 'done':  # 已有结果，直接返回
-            return True
-
-        if not any((i.state != 'done' for i in self.tasks)):
-            if not self.size:
-                self.info = str(self.path)
-            self.state = 'done'
-            self.recorder.record()
-            return True
-
-        return False
 
     @property
     def rate(self) -> Union[float, None]:
@@ -128,34 +129,51 @@ class Mission(object):
         else:
             return
 
-    def add_data(self, data, seek) -> None:
-        """把数据输入到记录器"""
-        self.recorder.add_data(data, seek)
+    def a_task_done(self, is_success: bool, info: str) -> None:
+        """当一个task完成时调用                 \n
+        :param is_success: 该task是否成功
+        :param info: 该task传入的信息
+        :return: None
+        """
+        if is_success is False:
+            self.cancel(True, False, info)
+            return
 
-    def cancel(self, del_file=True) -> None:
-        """停止所有task"""
-        if self.state == 'done':
+        if self.is_done:
+            return
+
+        self.done_tasks_count += 1
+        if self.done_tasks_count == self.tasks_count:
+            self.recorder.record()
+            if self.size and self.path.stat().st_size < self.size:
+                self.set_states(False, '下载失败', self._DONE)
+            else:
+                self.set_states('success', self.path, self._DONE)
+
+    def cancel(self,
+               del_file=True,
+               result: Union[bool, None, str] = 'cancel',
+               info: str = '已取消') -> None:
+        """取消该任务，停止未下载完的task        \n
+        :param del_file: 是否删除文件
+        :param result: 传入的结果
+        :param info: 传入的信息
+        :return: None
+        """
+        if self.is_done:
             return
 
         for task in self.tasks:
-            if task.state == 'running':
-                task.state = 'cancel'
-                task.result = 'canceled'
-                task.info = '已取消'
+            if not task.is_done:
+                task.set_states(result=result, info=info, state='cancel')
 
-            elif task.state == 'waiting':
-                task.state = 'done'
-                task.result = 'canceled'
-                task.info = '已取消'
+        while any((not i.is_done for i in self.tasks)):
+            sleep(.1)
 
-        self.result = 'canceled'
-        self.info = '已取消'
-
+        self.set_states(result=result, info=info, state=self._DONE)
         self.recorder.clear()
 
         if del_file:
-            while not self.is_done():
-                sleep(.3)
             self.del_file()
 
     def del_file(self):
@@ -183,7 +201,7 @@ class Mission(object):
                 print('未知大小 ', end='')
 
         t1 = perf_counter()
-        while self.state != 'done' and (perf_counter() - t1 < timeout or timeout == 0):
+        while not self.is_done and (perf_counter() - t1 < timeout or timeout == 0):
             if show and self.size:
                 try:
                     rate = round((self.path.stat().st_size / self.size) * 100, 2)
@@ -206,33 +224,45 @@ class Mission(object):
         return self.result, self.info
 
 
-class Task(Mission):
+class Task(BaseTask):
     def __init__(self, mission: Mission, range_: Union[list, None], ID: str):
-        super().__init__(0, mission.data)
-        self.parent = mission  # 父任务
+        """初始化
+        :param mission: 父任务对象
+        :param range_: 读取文件数据范围
+        :param ID: 任务id
+        """
+        super().__init__(ID)
+        self.mission = mission  # 父任务
         self.range = range_  # 分块范围
-        self.path = mission.path
-        self.file_name = mission.file_name
-        self._id = ID
 
     def __repr__(self) -> str:
         return f'<Task M{self.mid} T{self._id}  {self.info} {self.file_name}>'
 
     @property
-    def is_done(self) -> bool:
-        """返回子任务是否结束"""
-        return self.state == 'done'
-
-    @property
-    def is_success(self) -> bool:
-        """返回子任务是否成功"""
-        return True if self.result else False
-
-    @property
     def mid(self) -> int:
         """返回父任务id"""
-        return self.parent.mid
+        return self.mission.id
 
     @property
-    def recorder(self) -> ByteRecorder:
-        return self.parent.recorder
+    def data(self) -> MissionData:
+        """返回任务数据对象"""
+        return self.mission.data
+
+    @property
+    def path(self) -> str:
+        """返回文件保存路径"""
+        return self.mission.path
+
+    @property
+    def file_name(self) -> str:
+        """返回文件名"""
+        return self.mission.file_name
+
+    def add_data(self, data, seek) -> None:
+        """把数据输入到记录器"""
+        self.mission.recorder.add_data(data, seek)
+
+    def set_done(self, result: Union[bool, None, str], info: str) -> None:
+        """设置一个子任务为done状态"""
+        self.set_states(result=result, info=info, state=self._DONE)
+        self.mission.a_task_done(result, info)
