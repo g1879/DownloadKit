@@ -88,7 +88,7 @@ class DownloadKit(object):
     @roads.setter
     def roads(self, val: int) -> None:
         """设置可同时运行的线程数"""
-        if self.is_running():
+        if self.is_running:
             print('有任务未完成时不能改变roads。')
             return
         if val != self._roads:
@@ -175,9 +175,22 @@ class DownloadKit(object):
         except ImportError:
             self._session = Session()
 
+    @property
     def is_running(self) -> bool:
-        """检查是否有线程还在运行中"""
+        """返回是否有线程还在运行"""
         return any(self._threads.values()) or not self.waiting_list.empty()
+
+    def set_proxies(self, http: str = None, https: str = None) -> None:
+        """设置代理地址及端口，例：'http://127.0.0.1:1080'         \n
+        :param http: http代理地址及端口
+        :param https: https代理地址及端口
+        :return: None
+        """
+        if not http.startswith('http://'):
+            http = f'http://{http}'
+        if not https.startswith('http'):
+            https = f'http://{https}'
+        self._session.proxies = {'http': http, 'https': https}
 
     def add(self,
             file_url: str,
@@ -205,7 +218,7 @@ class DownloadKit(object):
                            split=split,
                            kwargs=kwargs)
         self._missions_num += 1
-        mission = Mission(self._missions_num, data)
+        mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
         return mission
@@ -287,13 +300,13 @@ class DownloadKit(object):
                 self.show(False)
             else:
                 t1 = perf_counter()
-                while self.is_running() or (perf_counter() - t1 < timeout or timeout == 0):
+                while self.is_running or (perf_counter() - t1 < timeout or timeout == 0):
                     sleep(0.1)
 
     def cancel(self):
         """取消所有等待中或执行中的任务"""
         for m in self._missions.values():
-            m.cancel(False)
+            m.cancel()
 
     def show(self, asyn: bool = True, keep: bool = False) -> None:
         """实时显示所有线程进度                 \n
@@ -314,7 +327,7 @@ class DownloadKit(object):
             Thread(target=self._stop_show).start()
 
         t1 = perf_counter()
-        while not self._stop_printing and (keep or self.is_running() or perf_counter() - t1 < wait):
+        while not self._stop_printing and (keep or self.is_running or perf_counter() - t1 < wait):
             print(f'\033[K', end='')
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
@@ -336,113 +349,6 @@ class DownloadKit(object):
             print(f'线程{i}：空闲')
 
         print()
-
-    def _download(self,
-                  mission_or_task: Union[Mission, Task],
-                  thread_id: int) -> None:
-        """此方法是执行下载的线程方法，用于根据任务下载文件     \n
-        :param mission_or_task: 下载任务对象
-        :param thread_id: 线程号
-        :return: None
-        """
-        if mission_or_task.is_done:
-            return
-        if mission_or_task.state == 'cancel':
-            mission_or_task.state = 'done'
-            return
-
-        file_url = mission_or_task.data.url
-        post_data = mission_or_task.data.post_data
-        kwargs = mission_or_task.data.kwargs
-
-        if isinstance(mission_or_task, Task):
-            task = mission_or_task
-            kwargs = CaseInsensitiveDict(kwargs)
-            if 'headers' not in kwargs:
-                kwargs['headers'] = {'Range': f"bytes={task.range[0]}-{task.range[1]}"}
-            else:
-                kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
-
-            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
-
-            if r:
-                _do_download(r, task, False)
-            else:
-                task.set_done(False, inf)
-
-            return
-
-        # ===================开始处理mission====================
-        mission = mission_or_task
-        mission.info = '下载中'
-        mission.state = 'running'
-
-        rename = mission.data.rename
-        goal_path = mission.data.goal_path
-        file_exists = mission.data.file_exists
-        split = mission.data.split
-
-        goal_Path = Path(goal_path)
-        # 按windows规则去除路径中的非法字符
-        goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
-        goal_Path = Path(goal_path).absolute()
-        goal_Path.mkdir(parents=True, exist_ok=True)
-        goal_path = str(goal_Path)
-
-        if file_exists == 'skip' and rename and (goal_Path / rename).exists():
-            mission.file_name = rename
-            mission.path = goal_Path / rename
-            mission.set_states('skip', str(mission.path), 'done')
-            return
-
-        mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
-
-        if not r:
-            mission.cancel(del_file=True, result=False, info=inf)
-            return
-
-        # -------------------获取文件信息-------------------
-        file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
-        file_size = file_info['size']
-        full_path = file_info['path']
-        mission.path = full_path
-        mission.file_name = full_path.name
-        mission.size = file_size
-
-        if file_info['skip']:
-            mission.set_states('skip', str(mission.path), 'done')
-            return
-
-        if not r:
-            mission.cancel(del_file=True, result=False, info=inf)
-            return
-
-        # -------------------设置分块任务-------------------
-        first = False
-        if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
-            first = True
-            chunks = [[s, min(s + self.block_size, file_size)] for s in range(0, file_size, self.block_size)]
-            chunks[-1][-1] = ''
-            chunks_len = len(chunks)
-
-            task1 = Task(mission, chunks[0], f'1/{chunks_len}')
-            mission.tasks_count = chunks_len
-            mission.tasks = []
-            mission.tasks.append(task1)
-
-            for ind, chunk in enumerate(chunks[1:], 2):
-                task = Task(mission, chunk, f'{ind}/{chunks_len}')
-                mission.tasks.append(task)
-                self._run_or_wait(task)
-
-        else:  # 不分块
-            task1 = Task(mission, None, '1/1')
-            mission.tasks.append(task1)
-
-        self._threads[thread_id]['mission'] = task1
-        _do_download(r, task1, first)
 
     def _connect(self,
                  url: str,
@@ -513,6 +419,117 @@ class DownloadKit(object):
         """设置停止打印的变量"""
         input()
         self._stop_printing = True
+
+    def _when_mission_done(self, mission: Mission) -> None:
+        """当任务完成时执行的操作                     \n
+        :param mission: 完结的任务
+        :return: None
+        """
+        # todo：记录，打印
+        pass
+
+    def _download(self,
+                  mission_or_task: Union[Mission, Task],
+                  thread_id: int) -> None:
+        """此方法是执行下载的线程方法，用于根据任务下载文件     \n
+        :param mission_or_task: 下载任务对象
+        :param thread_id: 线程号
+        :return: None
+        """
+        if mission_or_task.is_done:
+            return
+        if mission_or_task.state == 'cancel':
+            mission_or_task.state = 'done'
+            return
+
+        file_url = mission_or_task.data.url
+        post_data = mission_or_task.data.post_data
+        kwargs = mission_or_task.data.kwargs
+
+        if isinstance(mission_or_task, Task):
+            task = mission_or_task
+            kwargs = CaseInsensitiveDict(kwargs)
+            if 'headers' not in kwargs:
+                kwargs['headers'] = {'Range': f"bytes={task.range[0]}-{task.range[1]}"}
+            else:
+                kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
+
+            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
+            r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
+
+            if r:
+                _do_download(r, task, False)
+            else:
+                task.set_done(False, inf)
+
+            return
+
+        # ===================开始处理mission====================
+        mission = mission_or_task
+        mission.info = '下载中'
+        mission.state = 'running'
+
+        rename = mission.data.rename
+        goal_path = mission.data.goal_path
+        file_exists = mission.data.file_exists
+        split = mission.data.split
+
+        goal_Path = Path(goal_path)
+        # 按windows规则去除路径中的非法字符
+        goal_path = goal_Path.anchor + sub(r'[*:|<>?"]', '', goal_path.lstrip(goal_Path.anchor)).strip()
+        goal_Path = Path(goal_path).absolute()
+        goal_Path.mkdir(parents=True, exist_ok=True)
+        goal_path = str(goal_Path)
+
+        if file_exists == 'skip' and rename and (goal_Path / rename).exists():
+            mission.file_name = rename
+            mission.path = goal_Path / rename
+            mission.set_done('skip', str(mission.path))
+            return
+
+        mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
+        r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
+
+        if not r:
+            mission.break_mission(result=False, info=inf)
+            return
+
+        # -------------------获取文件信息-------------------
+        file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
+        file_size = file_info['size']
+        full_path = file_info['path']
+        mission.path = full_path
+        mission.file_name = full_path.name
+        mission.size = file_size
+
+        if file_info['skip']:
+            mission.set_done('skip', str(mission.path))
+            return
+
+        # -------------------设置分块任务-------------------
+        first = False
+        if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
+            first = True
+            chunks = [[s, min(s + self.block_size, file_size)] for s in range(0, file_size, self.block_size)]
+            chunks[-1][-1] = ''
+            chunks_len = len(chunks)
+
+            task1 = Task(mission, chunks[0], f'1/{chunks_len}')
+            mission.tasks_count = chunks_len
+            mission.tasks = []
+            mission.tasks.append(task1)
+
+            for ind, chunk in enumerate(chunks[1:], 2):
+                task = Task(mission, chunk, f'{ind}/{chunks_len}')
+                mission.tasks.append(task)
+                self._run_or_wait(task)
+
+        else:  # 不分块
+            task1 = Task(mission, None, '1/1')
+            mission.tasks.append(task1)
+
+        self._threads[thread_id]['mission'] = task1
+        _do_download(r, task1, first)
 
 
 def _do_download(r: Response, task: Task, first: bool = False):

@@ -26,9 +26,13 @@ class MissionData(object):
 
 
 class BaseTask(object):
+    """任务类基类"""
     _DONE = 'done'
 
     def __init__(self, ID: Union[int, str]):
+        """初始化                   \n
+        :param ID: 任务id
+        """
         self._id = ID
         self.state = 'waiting'  # 状态：'waiting'、'running'、'done'
         self.result = None  # 结果：'success'、'skip'、'cancel'、False、None
@@ -36,32 +40,39 @@ class BaseTask(object):
 
     @property
     def data(self):
+        """返回任务数据"""
         return
 
     @property
     def is_done(self) -> bool:
-        """返回子任务是否结束"""
+        """返回任务是否结束"""
         return self.state == self._DONE
 
     def set_states(self,
                    result: Union[bool, None, str] = None,
                    info: str = None,
                    state: str = 'done') -> None:
-        """设置任务结果值"""
+        """设置任务结果值                                                  \n
+        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param info: 任务信息
+        :param state: 任务状态：'waiting'、'running'、'done'
+        :return: None
+        """
         self.result = result
         self.info = info
         self.state = state
 
 
 class Mission(BaseTask):
-    """任务对象"""
+    """任务类"""
 
-    def __init__(self, ID: int, data: MissionData):
+    def __init__(self, ID: int, data: MissionData, download_kit):
         """初始化                               \n
         :param ID: 任务id
         :param data: 任务数据
         """
         super().__init__(ID)
+        self.download_kit = download_kit
         self._data: MissionData = data
         self.size = None
 
@@ -88,6 +99,7 @@ class Mission(BaseTask):
 
     @property
     def data(self) -> MissionData:
+        """返回任务数据"""
         return self._data
 
     @property
@@ -113,14 +125,6 @@ class Mission(BaseTask):
             self._recorder.show_msg = False
         return self._recorder
 
-    def is_success(self) -> Union[bool, None]:
-        """检查下载是否成功"""
-        if self.result is not None:  # 已有结果，直接返回
-            return False if self.result is False else True
-
-        if not self.is_done:  # 未完成，返回None表示未知
-            return None
-
     @property
     def rate(self) -> Union[float, None]:
         """返回下载进度百分比"""
@@ -129,6 +133,29 @@ class Mission(BaseTask):
         else:
             return
 
+    def set_done(self, result: Union[bool, None, str], info: str) -> None:
+        """设置一个任务为done状态                                          \n
+        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param info: 任务信息
+        :return: None
+        """
+        if result == 'skip':
+            self.set_states(result=result, info=info, state=self._DONE)
+
+        elif result == 'cancel' or result is False:
+            self.recorder.clear()
+            self.set_states(result=result, info=info, state=self._DONE)
+
+        elif result == 'success':
+            self.recorder.record()
+            if self.size and self.path.stat().st_size < self.size:
+                self.del_file()
+                self.set_states(False, '下载失败', self._DONE)
+            else:
+                self.set_states('success', info, self._DONE)
+
+        self.download_kit._when_mission_done(self)
+
     def a_task_done(self, is_success: bool, info: str) -> None:
         """当一个task完成时调用                 \n
         :param is_success: 该task是否成功
@@ -136,7 +163,7 @@ class Mission(BaseTask):
         :return: None
         """
         if is_success is False:
-            self.cancel(True, False, info)
+            self.break_mission(False, info)
             return
 
         if self.is_done:
@@ -144,20 +171,12 @@ class Mission(BaseTask):
 
         self.done_tasks_count += 1
         if self.done_tasks_count == self.tasks_count:
-            self.recorder.record()
-            if self.size and self.path.stat().st_size < self.size:
-                self.set_states(False, '下载失败', self._DONE)
-            else:
-                self.set_states('success', self.path, self._DONE)
+            self.set_done('success', info)
 
-    def cancel(self,
-               del_file=True,
-               result: Union[bool, None, str] = 'cancel',
-               info: str = '已取消') -> None:
-        """取消该任务，停止未下载完的task        \n
-        :param del_file: 是否删除文件
-        :param result: 传入的结果
-        :param info: 传入的信息
+    def break_mission(self, result: Union[bool, None, str], info: str) -> None:
+        """中止该任务，停止未下载完的task                                  \n
+        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param info: 任务信息
         :return: None
         """
         if self.is_done:
@@ -165,16 +184,17 @@ class Mission(BaseTask):
 
         for task in self.tasks:
             if not task.is_done:
-                task.set_states(result=result, info=info, state='cancel')
+                task.set_states(result=result, info=info, state=self._DONE)
 
         while any((not i.is_done for i in self.tasks)):
             sleep(.1)
 
-        self.set_states(result=result, info=info, state=self._DONE)
-        self.recorder.clear()
+        self.del_file()
+        self.set_done(result, info)
 
-        if del_file:
-            self.del_file()
+    def cancel(self) -> None:
+        """取消该任务，停止未下载完的task"""
+        self.break_mission('cancel', '已取消')
 
     def del_file(self):
         """删除下载的文件"""
@@ -225,8 +245,10 @@ class Mission(BaseTask):
 
 
 class Task(BaseTask):
+    """子任务类"""
+
     def __init__(self, mission: Mission, range_: Union[list, None], ID: str):
-        """初始化
+        """初始化                               \n
         :param mission: 父任务对象
         :param range_: 读取文件数据范围
         :param ID: 任务id
@@ -258,11 +280,19 @@ class Task(BaseTask):
         """返回文件名"""
         return self.mission.file_name
 
-    def add_data(self, data, seek) -> None:
-        """把数据输入到记录器"""
+    def add_data(self, data: bytes, seek: int = None) -> None:
+        """把数据输入到记录器                           \n
+        :param data: 文件字节数据
+        :param seek: 在文件中的位置，None表示最后
+        :return: None
+        """
         self.mission.recorder.add_data(data, seek)
 
     def set_done(self, result: Union[bool, None, str], info: str) -> None:
-        """设置一个子任务为done状态"""
+        """设置一个子任务为done状态                                          \n
+        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param info: 任务信息
+        :return: None
+        """
         self.set_states(result=result, info=info, state=self._DONE)
         self.mission.a_task_done(result, info)

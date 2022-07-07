@@ -114,7 +114,7 @@ d = DownloadKit(session=page.drission)
 - file_exists：遇到同名文件时的处理方式，可赋值，可选`'skip'`、`'overwrite'`、`'rename'`
 - session：用于连接的`Session`对象
 - waiting_list：等待下载的队列
-- is_running()：返回是否有线程还在运行
+- is_running：返回是否有线程还在运行
 
 **`file_exists`属性说明：**
 
