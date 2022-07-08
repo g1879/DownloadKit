@@ -162,11 +162,11 @@ class Mission(BaseTask):
         :param info: 该task传入的信息
         :return: None
         """
-        if is_success is False:
-            self.break_mission(False, info)
+        if self.is_done:
             return
 
-        if self.is_done:
+        if is_success is False:
+            self.break_mission(False, info)
             return
 
         self.done_tasks_count += 1
@@ -189,8 +189,8 @@ class Mission(BaseTask):
         while any((not i.is_done for i in self.tasks)):
             sleep(.1)
 
-        self.del_file()
         self.set_done(result, info)
+        self.del_file()
 
     def cancel(self) -> None:
         """取消该任务，停止未下载完的task"""

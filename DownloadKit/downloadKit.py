@@ -16,7 +16,7 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, _set_charset, _get_file_info
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, _set_charset, _get_file_info, LogMode
 from .mission import Task, Mission, MissionData, BaseTask
 
 
@@ -47,6 +47,10 @@ class DownloadKit(object):
         self._retry = None
         self._interval = None
         self._timeout = None
+
+        self._print_mode = None
+        self._log_mode = None
+        self._logger = None
 
         self.goal_path: str = goal_path or '.'
         self.file_exists: str = file_exists
@@ -79,6 +83,26 @@ class DownloadKit(object):
                         post_data=post_data,
                         split=False,
                         **kwargs).wait(show=show_msg)
+
+    def set_print(self) -> LogMode:
+        """设置打印到控制台的信息，可选全部、错误任务、不打印"""
+        if self._print_mode is None:
+            self._print_mode = LogMode()
+        return self._print_mode
+
+    def set_log(self, log_path: [str, Path] = None) -> LogMode:
+        """设置记录到文件的信息，可选全部、错误任务、不记录   \n
+        :param log_path: 记录文件路径
+        :return: LogMode对象
+        """
+        if self._log_mode is None:
+            self._log_mode = LogMode()
+        if log_path is not None:
+            if self._logger is not None:
+                self._logger.set_path(log_path)
+            else:
+                self._logger = Recorder(log_path, 1)
+        return self._log_mode
 
     @property
     def roads(self) -> int:
@@ -263,23 +287,9 @@ class DownloadKit(object):
         """
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
-    def get_failed_missions(self, save_to: Union[str, Path] = None) -> list:
-        """返回失败任务列表，可保存到文件，支持csv、xlsx、txt、json格式     \n
-        :param save_to: 保存文件的路径
-        :return: 失败任务列表
-        """
-        lst = [i for i in self._missions.values() if i.result is False]
-        if save_to:
-            lst = [{'url': i.data.url,
-                    'path': i.data.goal_path,
-                    'rename': i.data.rename,
-                    'post_data': i.data.post_data,
-                    'kwargs': i.data.kwargs}
-                   for i in lst]
-            r = Recorder(save_to, cache_size=0)
-            r.add_data(lst)
-            r.record()
-        return lst
+    def get_failed_missions(self) -> list:
+        """返回失败任务列表"""
+        return [i for i in self._missions.values() if i.result is False]
 
     def wait(self,
              mission: Union[int, Mission] = None,
@@ -425,8 +435,16 @@ class DownloadKit(object):
         :param mission: 完结的任务
         :return: None
         """
-        # todo：记录，打印
-        pass
+        if self.set_print().log_mode == 'all' or (self.set_print().log_mode == 'fail' and mission.result is False):
+            print(f'{mission.data.url}\n{mission.result}\n{mission.info}\n')
+
+        if self.set_log().log_mode == 'all' or (self.set_log().log_mode == 'fail' and mission.result is False):
+            data = {'url': mission.data.url,
+                    'path': mission.data.goal_path,
+                    'rename': mission.data.rename,
+                    'post_data': mission.data.post_data,
+                    'kwargs': mission.data.kwargs}
+            self._logger.add_data(data)
 
     def _download(self,
                   mission_or_task: Union[Mission, Task],
@@ -490,6 +508,9 @@ class DownloadKit(object):
         mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
         r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
 
+        if mission.is_done:
+            return
+
         if not r:
             mission.break_mission(result=False, info=inf)
             return
@@ -539,11 +560,12 @@ def _do_download(r: Response, task: Task, first: bool = False):
     :param first: 是否第一个分块
     :return: None
     """
-    if task.is_done:
+    if task.is_done or task.mission.is_done:
         return
 
     task.set_states(result=None, info='下载中', state='running')
     block_size = 65536  # 64k
+    result = None
 
     try:
         if first:  # 分块时第一块
@@ -554,6 +576,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
             if task.range is None:  # 不分块
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
+                        result = 'cancel'
                         break
                     if chunk:
                         task.add_data(chunk, None)
@@ -562,6 +585,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 begin = task.range[0]
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
+                        result = 'cancel'
                         break
                     if chunk:
                         task.add_data(chunk, seek=begin)
@@ -572,6 +596,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 num = (end - begin) // block_size
                 for ind, chunk in enumerate(r.iter_content(chunk_size=block_size), 1):
                     if task.state in ('cancel', 'done'):
+                        result = 'cancel'
                         break
                     if chunk:
                         task.add_data(chunk, seek=begin)
@@ -579,12 +604,13 @@ def _do_download(r: Response, task: Task, first: bool = False):
                             begin += block_size
 
     except Exception as e:
-        success, info = False, f'下载失败。{r.status_code} {e}'
+        result, info = False, f'下载失败。{r.status_code} {e}'
 
     else:
-        success, info = 'success', str(task.path)
+        result = 'success' if result is None else result
+        info = str(task.path)
 
     finally:
         r.close()
 
-    task.set_done(result=success, info=info)
+    task.set_done(result=result, info=info)

@@ -76,6 +76,25 @@ class FileExistsSetter(object):
         return file_exists._file_exists
 
 
+class LogMode(object):
+    """设置记录或打印哪些任务信息"""
+
+    def __init__(self):
+        self.log_mode = None
+
+    def all(self):
+        """全部"""
+        self.log_mode = 'all'
+
+    def none(self):
+        """不记录或打印"""
+        self.log_mode = None
+
+    def fail(self):
+        """只记录或打印失败任务"""
+        self.log_mode = 'fail'
+
+
 def get_usable_path(path: Union[str, Path]) -> Path:
     """检查文件或文件夹是否有重名，并返回可以使用的路径           \n
     :param path: 文件或文件夹路径
