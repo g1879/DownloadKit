@@ -39,6 +39,11 @@ class BaseTask(object):
         self.info = '等待下载'  # 信息
 
     @property
+    def id(self) -> Union[int, str]:
+        """返回任务或子任务id"""
+        return self._id
+
+    @property
     def data(self):
         """返回任务数据"""
         return
@@ -85,17 +90,7 @@ class Mission(BaseTask):
         self._recorder = None
 
     def __repr__(self) -> str:
-        return f'<Mission {self.mid} {self.info} {self.file_name}>'
-
-    @property
-    def id(self) -> int:
-        """返回任务id"""
-        return self._id
-
-    @property
-    def mid(self) -> int:
-        """返回父任务id"""
-        return self._id
+        return f'<Mission {self.id} {self.info} {self.file_name}>'
 
     @property
     def data(self) -> MissionData:
@@ -184,7 +179,7 @@ class Mission(BaseTask):
 
         for task in self.tasks:
             if not task.is_done:
-                task.set_states(result=result, info=info, state=self._DONE)
+                task.set_states(result=result, info=info, state='cancel')
 
         while any((not i.is_done for i in self.tasks)):
             sleep(.1)

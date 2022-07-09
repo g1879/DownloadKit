@@ -343,8 +343,8 @@ class DownloadKit(object):
             for k, v in self._threads.items():
                 m = v['mission'] if v else None
                 if m:
-                    rate = m.mission.rate if isinstance(m, Task) else m.rate if m else ''
-                    path = f'M{m.mid} {rate}% {m}'
+                    items = (m.mission.rate, m.mid) if isinstance(m, Task) else (m.rate, m.id)
+                    path = f'M{items[1]} {items[0]}% {m}'
                 else:
                     path = '空闲'
                 print(f'\033[K', end='')
