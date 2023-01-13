@@ -9,7 +9,7 @@ from queue import Queue
 from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
-from typing import Union
+from typing import Union, Tuple
 from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
@@ -43,7 +43,7 @@ class DownloadKit(object):
         self._missions_num = 0
         self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
-        self._page = None  # 如果接收MixPage对象则存放于此
+        self._page = None  # 如果接收页面对象则存放于此
         self._retry = None
         self._interval = None
         self._timeout = None
@@ -182,15 +182,13 @@ class DownloadKit(object):
     @session.setter
     def session(self, session) -> None:
         try:
-            from DrissionPage import Drission, MixPage
-            from DrissionPage.session_page import SessionPage
-            from DrissionPage.config import SessionOptions
+            from DrissionPage import WebPage, MixPage, Drission, SessionPage, SessionOptions
 
             if isinstance(session, SessionOptions):
                 self._session = Drission(driver_or_options=False, session_or_options=session).session
             elif isinstance(session, Drission):
                 self._session = session.session
-            elif isinstance(session, (MixPage, SessionPage)):
+            elif isinstance(session, (SessionPage, WebPage, MixPage)):
                 self._session = session.session
                 self._page = session
             else:
@@ -364,7 +362,7 @@ class DownloadKit(object):
                  url: str,
                  mode: str = 'get',
                  data: Union[dict, str] = None,
-                 **kwargs) -> tuple:
+                 **kwargs) -> Tuple[Union[Response, None], str]:
         """生成response对象                                                   \n
         :param url: 目标url
         :param mode: 'get', 'post' 中选择

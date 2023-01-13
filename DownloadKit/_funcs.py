@@ -162,7 +162,7 @@ def _set_charset(response) -> Response:
     """设置Response对象的编码"""
     # 在headers中获取编码
     content_type = response.headers.get('content-type', '').lower()
-    charset = search(r'charset[=: ]*(.*)?[;]', content_type)
+    charset = search(r'charset[=: ]*(.*)?;', content_type)
 
     if charset:
         response.encoding = charset.group(1)
