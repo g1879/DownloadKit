@@ -249,7 +249,7 @@ class DownloadKit(object):
         """接收任务，有空线程则运行，没有则进入等待队列"""
         thread_id = self._get_usable_thread()
         if thread_id is not None:
-            thread = Thread(target=self._run, args=(thread_id, mission))
+            thread = Thread(target=self._run, args=(thread_id, mission), daemon=False)
             self._threads[thread_id] = {'thread': thread, 'mission': None}
             thread.start()
         else:
