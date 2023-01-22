@@ -56,6 +56,7 @@ class DownloadKit(object):
         self.goal_path: str = goal_path or '.'
         self.file_exists: str = file_exists
         self.show_errmsg: bool = False
+        self.split: bool = True
         self.block_size: Union[str, int] = '50M'  # 分块大小
         self.session = session
 
@@ -223,7 +224,7 @@ class DownloadKit(object):
             rename: str = None,
             file_exists: str = None,
             post_data: Union[str, dict] = None,
-            split: bool = True,
+            split: bool = None,
             **kwargs) -> Mission:
         """添加一个下载任务并将其返回                                                                    \n
         :param file_url: 文件网址
@@ -231,7 +232,7 @@ class DownloadKit(object):
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
         :param post_data: post方式使用的数据
-        :param split: 是否允许多线程分块下载
+        :param split: 是否允许多线程分块下载，为None则使用对象属性
         :param kwargs: 连接参数
         :return: 任务对象
         """
@@ -240,7 +241,7 @@ class DownloadKit(object):
                            rename=rename,
                            file_exists=file_exists or self.file_exists,
                            post_data=post_data,
-                           split=split,
+                           split=self.split if split is None else split,
                            kwargs=kwargs)
         self._missions_num += 1
         self._running_count += 1
