@@ -41,6 +41,7 @@ class DownloadKit(object):
         self._threads = {i: None for i in range(self._roads)}
         self._waiting_list: Queue = Queue()
         self._missions_num = 0
+        self._running_count = 0  # 正在运行的任务数
         self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
         self._page = None  # 如果接收页面对象则存放于此
@@ -200,7 +201,9 @@ class DownloadKit(object):
     @property
     def is_running(self) -> bool:
         """返回是否有线程还在运行"""
-        return any(self._threads.values()) or not self.waiting_list.empty()
+        return self._running_count > 0
+        # return any([i for i in self._missions.values() if not i.is_done])
+        # return any(self._threads.values()) or not self.waiting_list.empty()
 
     def set_proxies(self, http: str = None, https: str = None) -> None:
         """设置代理地址及端口，例：'http://127.0.0.1:1080'         \n
@@ -240,6 +243,7 @@ class DownloadKit(object):
                            split=split,
                            kwargs=kwargs)
         self._missions_num += 1
+        self._running_count += 1
         mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
@@ -307,8 +311,8 @@ class DownloadKit(object):
             if show:
                 self.show(False)
             else:
-                t1 = perf_counter()
-                while self.is_running or (perf_counter() - t1 < timeout or timeout == 0):
+                end_time = perf_counter() + timeout
+                while self.is_running or (perf_counter() < end_time or timeout == 0):
                     sleep(0.1)
 
     def cancel(self):
@@ -334,8 +338,8 @@ class DownloadKit(object):
         if keep:
             Thread(target=self._stop_show).start()
 
-        t1 = perf_counter()
-        while not self._stop_printing and (keep or self.is_running or perf_counter() - t1 < wait):
+        end_time = perf_counter() + wait
+        while not self._stop_printing and (keep or self.is_running or perf_counter() < end_time):
             print(f'\033[K', end='')
             print(f'等待任务数：{self._waiting_list.qsize()}')
             for k, v in self._threads.items():
@@ -433,6 +437,7 @@ class DownloadKit(object):
         :param mission: 完结的任务
         :return: None
         """
+        self._running_count -= 1
         if self.set_print().log_mode == 'all' or (self.set_print().log_mode == 'fail' and mission.result is False):
             print(f'{mission.data.url}\n{mission.result}\n{mission.info}\n')
 
