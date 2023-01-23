@@ -1,4 +1,8 @@
 # -*- coding:utf-8 -*-
+"""
+@Author  :   g1879
+@Contact :   g1879@qq.com
+"""
 from pathlib import Path
 from time import sleep, perf_counter
 from typing import Union, List
@@ -9,13 +13,7 @@ from DataRecorder import ByteRecorder
 class MissionData(object):
     """保存任务数据的对象"""
 
-    def __init__(self, url: str,
-                 goal_path: Union[str, Path],
-                 rename: Union[str, None],
-                 file_exists: str,
-                 post_data: Union[str, dict, None],
-                 split: bool,
-                 kwargs: dict):
+    def __init__(self, url, goal_path, rename, file_exists, post_data, split, kwargs):
         self.url = url
         self.goal_path = goal_path
         self.rename = rename
@@ -29,7 +27,7 @@ class BaseTask(object):
     """任务类基类"""
     _DONE = 'done'
 
-    def __init__(self, ID: Union[int, str]):
+    def __init__(self, ID):
         """初始化                   \n
         :param ID: 任务id
         """
@@ -39,7 +37,7 @@ class BaseTask(object):
         self.info = '等待下载'  # 信息
 
     @property
-    def id(self) -> Union[int, str]:
+    def id(self):
         """返回任务或子任务id"""
         return self._id
 
@@ -49,14 +47,11 @@ class BaseTask(object):
         return
 
     @property
-    def is_done(self) -> bool:
+    def is_done(self):
         """返回任务是否结束"""
         return self.state == self._DONE
 
-    def set_states(self,
-                   result: Union[bool, None, str] = None,
-                   info: str = None,
-                   state: str = 'done') -> None:
+    def set_states(self, result=None, info=None, state='done'):
         """设置任务结果值                                                  \n
         :param result: 结果：'success'、'skip'、'cancel'、False、None
         :param info: 任务信息
@@ -71,7 +66,7 @@ class BaseTask(object):
 class Mission(BaseTask):
     """任务类"""
 
-    def __init__(self, ID: int, data: MissionData, download_kit):
+    def __init__(self, ID, data, download_kit):
         """初始化                               \n
         :param ID: 任务id
         :param data: 任务数据
@@ -89,21 +84,21 @@ class Mission(BaseTask):
         self._path: Union[Path, None] = None  # 文件完整路径，Path对象
         self._recorder = None
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return f'<Mission {self.id} {self.info} {self.file_name}>'
 
     @property
-    def data(self) -> MissionData:
+    def data(self):
         """返回任务数据"""
         return self._data
 
     @property
-    def path(self) -> Union[str, Path]:
+    def path(self):
         """返回文件保存路径"""
         return self._path
 
     @path.setter
-    def path(self, path: Union[str, Path, None]) -> None:
+    def path(self, path):
         """设置文件保存路径"""
         if isinstance(path, (Path, str)):
             path = Path(path)
@@ -113,7 +108,7 @@ class Mission(BaseTask):
         self.recorder.set_path(path)
 
     @property
-    def recorder(self) -> ByteRecorder:
+    def recorder(self):
         """返回记录器对象"""
         if self._recorder is None:
             self._recorder = ByteRecorder(cache_size=100)
@@ -121,14 +116,14 @@ class Mission(BaseTask):
         return self._recorder
 
     @property
-    def rate(self) -> Union[float, None]:
+    def rate(self):
         """返回下载进度百分比"""
         if self.path and self.path.exists():
             return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
         else:
             return
 
-    def set_done(self, result: Union[bool, None, str], info: str) -> None:
+    def set_done(self, result, info):
         """设置一个任务为done状态                                          \n
         :param result: 结果：'success'、'skip'、'cancel'、False、None
         :param info: 任务信息
@@ -151,7 +146,7 @@ class Mission(BaseTask):
 
         self.download_kit._when_mission_done(self)
 
-    def a_task_done(self, is_success: bool, info: str) -> None:
+    def a_task_done(self, is_success, info):
         """当一个task完成时调用                 \n
         :param is_success: 该task是否成功
         :param info: 该task传入的信息
@@ -168,7 +163,7 @@ class Mission(BaseTask):
         if self.done_tasks_count == self.tasks_count:
             self.set_done('success', info)
 
-    def break_mission(self, result: Union[bool, None, str], info: str) -> None:
+    def break_mission(self, result, info):
         """中止该任务，停止未下载完的task                                  \n
         :param result: 结果：'success'、'skip'、'cancel'、False、None
         :param info: 任务信息
@@ -199,7 +194,7 @@ class Mission(BaseTask):
             except Exception:
                 pass
 
-    def wait(self, show: bool = True, timeout: float = 0) -> tuple:
+    def wait(self, show=True, timeout=0):
         """等待当前任务完成                  \n
         :param show: 是否显示下载进度
         :param timeout: 超时时间
@@ -242,7 +237,7 @@ class Mission(BaseTask):
 class Task(BaseTask):
     """子任务类"""
 
-    def __init__(self, mission: Mission, range_: Union[list, None], ID: str):
+    def __init__(self, mission, range_, ID):
         """初始化                               \n
         :param mission: 父任务对象
         :param range_: 读取文件数据范围
@@ -252,30 +247,30 @@ class Task(BaseTask):
         self.mission = mission  # 父任务
         self.range = range_  # 分块范围
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return f'<Task M{self.mid} T{self._id}  {self.info} {self.file_name}>'
 
     @property
-    def mid(self) -> int:
+    def mid(self):
         """返回父任务id"""
         return self.mission.id
 
     @property
-    def data(self) -> MissionData:
+    def data(self):
         """返回任务数据对象"""
         return self.mission.data
 
     @property
-    def path(self) -> str:
+    def path(self):
         """返回文件保存路径"""
         return self.mission.path
 
     @property
-    def file_name(self) -> str:
+    def file_name(self):
         """返回文件名"""
         return self.mission.file_name
 
-    def add_data(self, data: bytes, seek: int = None) -> None:
+    def add_data(self, data, seek=None):
         """把数据输入到记录器                           \n
         :param data: 文件字节数据
         :param seek: 在文件中的位置，None表示最后
@@ -283,7 +278,7 @@ class Task(BaseTask):
         """
         self.mission.recorder.add_data(data, seek)
 
-    def set_done(self, result: Union[bool, None, str], info: str) -> None:
+    def set_done(self, result, info):
         """设置一个子任务为done状态                                          \n
         :param result: 结果：'success'、'skip'、'cancel'、False、None
         :param info: 任务信息

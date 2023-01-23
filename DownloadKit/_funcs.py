@@ -2,34 +2,34 @@
 """
 @Author  :   g1879
 @Contact :   g1879@qq.com
-@File    :   _funcs.py
 """
 from copy import copy
 from os import path as os_PATH
 from pathlib import Path
 from random import randint
 from re import search, sub
-from threading import Lock
 from time import time
-from typing import Union
 from urllib.parse import unquote
 
-from requests import Session, Response
+from requests import Session
 
 
-def copy_session(s: Session):
-    """复制输入Session对象，返回一个新的"""
+def copy_session(session):
+    """复制输入Session对象，返回一个新的
+    :param session: 被复制的Session对象
+    :return: 新Session对象
+    """
     new = Session()
-    new.headers = s.headers.copy()
-    new.cookies = s.cookies.copy()
+    new.headers = session.headers.copy()
+    new.cookies = session.cookies.copy()
     new.stream = True
-    new.auth = s.auth
-    new.proxies = dict(s.proxies).copy()
-    new.params = copy(s.params)  #
-    new.cert = s.cert
-    new.max_redirects = s.max_redirects
-    new.trust_env = s.trust_env
-    new.verify = s.verify
+    new.auth = session.auth
+    new.proxies = dict(session.proxies).copy()
+    new.params = copy(session.params)  #
+    new.cert = session.cert
+    new.max_redirects = session.max_redirects
+    new.trust_env = session.trust_env
+    new.verify = session.verify
 
     return new
 
@@ -95,7 +95,7 @@ class LogMode(object):
         self.log_mode = 'fail'
 
 
-def get_usable_path(path: Union[str, Path]) -> Path:
+def get_usable_path(path):
     """检查文件或文件夹是否有重名，并返回可以使用的路径           \n
     :param path: 文件或文件夹路径
     :return: 可用的路径，Path对象
@@ -123,7 +123,7 @@ def get_usable_path(path: Union[str, Path]) -> Path:
     return path
 
 
-def make_valid_name(full_name: str) -> str:
+def make_valid_name(full_name):
     """获取有效的文件名                  \n
     :param full_name: 文件名
     :return: 可用的文件名
@@ -149,7 +149,7 @@ def make_valid_name(full_name: str) -> str:
     return sub(r'[<>/\\|:*?\n]', '', full_name)
 
 
-def get_long(txt) -> int:
+def get_long(txt):
     """返回字符串中字符个数（一个汉字是2个字符）          \n
     :param txt: 字符串
     :return: 字符个数
@@ -158,7 +158,7 @@ def get_long(txt) -> int:
     return int((len(txt.encode('utf-8')) - txt_len) / 2 + txt_len)
 
 
-def _set_charset(response) -> Response:
+def set_charset(response):
     """设置Response对象的编码"""
     # 在headers中获取编码
     content_type = response.headers.get('content-type', '').lower()
@@ -181,11 +181,7 @@ def _set_charset(response) -> Response:
     return response
 
 
-def _get_file_info(response,
-                   goal_path: str = None,
-                   rename: str = None,
-                   file_exists: str = None,
-                   lock: Lock = None) -> dict:
+def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=None):
     """获取文件信息，大小单位为byte                   \n
     包括：size、path、skip
     :param response: Response对象

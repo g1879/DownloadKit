@@ -9,15 +9,15 @@ from queue import Queue
 from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
-from typing import Union, Tuple
+from typing import Union
 from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, _set_charset, _get_file_info, LogMode
-from .mission import Task, Mission, MissionData, BaseTask
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, LogMode
+from .mission import Task, Mission, MissionData
 
 
 class DownloadKit(object):
@@ -25,12 +25,8 @@ class DownloadKit(object):
     goal_path = PathSetter()
     block_size = BlockSizeSetter()
 
-    def __init__(self,
-                 goal_path: Union[str, Path] = None,
-                 roads: int = 10,
-                 session=None,
-                 file_exists: str = 'rename'):
-        """初始化                                                                         \n
+    def __init__(self, goal_path=None, roads=10, session=None, file_exists='rename'):
+        """
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
         :param session: 使用的Session对象，或配置对象、页面对象等
@@ -60,15 +56,9 @@ class DownloadKit(object):
         self.block_size: Union[str, int] = '50M'  # 分块大小
         self.session = session
 
-    def __call__(self,
-                 file_url: str,
-                 goal_path: Union[str, Path] = None,
-                 rename: str = None,
-                 file_exists: str = None,
-                 post_data: Union[str, dict] = None,
-                 show_msg: bool = True,
-                 **kwargs) -> tuple:
-        """以阻塞的方式下载一个文件并返回结果，主要用于兼容旧版DrissionPage                                     \n
+    def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, post_data=None,
+                 show_msg=True, **kwargs):
+        """以阻塞的方式下载一个文件并返回结果
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
@@ -86,14 +76,14 @@ class DownloadKit(object):
                         split=False,
                         **kwargs).wait(show=show_msg)
 
-    def set_print(self) -> LogMode:
+    def set_print(self):
         """设置打印到控制台的信息，可选全部、错误任务、不打印"""
         if self._print_mode is None:
             self._print_mode = LogMode()
         return self._print_mode
 
-    def set_log(self, log_path: [str, Path] = None) -> LogMode:
-        """设置记录到文件的信息，可选全部、错误任务、不记录   \n
+    def set_log(self, log_path=None):
+        """设置记录到文件的信息，可选全部、错误任务、不记录
         :param log_path: 记录文件路径
         :return: LogMode对象
         """
@@ -107,12 +97,12 @@ class DownloadKit(object):
         return self._log_mode
 
     @property
-    def roads(self) -> int:
+    def roads(self):
         """可同时运行的线程数"""
         return self._roads
 
     @roads.setter
-    def roads(self, val: int) -> None:
+    def roads(self, val):
         """设置可同时运行的线程数"""
         if self.is_running:
             print('有任务未完成时不能改变roads。')
@@ -122,7 +112,7 @@ class DownloadKit(object):
             self._threads = {i: None for i in range(self._roads)}
 
     @property
-    def retry(self) -> int:
+    def retry(self):
         """返回连接失败时重试次数"""
         if self._retry is not None:
             return self._retry
@@ -132,14 +122,14 @@ class DownloadKit(object):
             return 3
 
     @retry.setter
-    def retry(self, times: int) -> None:
+    def retry(self, times):
         """设置连接失败时重试次数"""
         if not isinstance(times, int) or times < 0:
             raise TypeError('times参数只能接受int格式且不能小于0。')
         self._retry = times
 
     @property
-    def interval(self) -> float:
+    def interval(self):
         """返回连接失败时重试间隔"""
         if self._interval is not None:
             return self._interval
@@ -149,14 +139,17 @@ class DownloadKit(object):
             return 5
 
     @interval.setter
-    def interval(self, seconds: Union[int, float]) -> None:
-        """设置连接失败时重试间隔"""
+    def interval(self, seconds):
+        """设置连接失败时重试间隔
+        :param seconds: 连接失败时重试间隔（秒）
+        :return: None
+        """
         if not isinstance(seconds, (int, float)) or seconds < 0:
             raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
         self._interval = seconds
 
     @property
-    def timeout(self) -> float:
+    def timeout(self):
         """返回连接超时时间"""
         if self._timeout is not None:
             return self._timeout
@@ -166,25 +159,32 @@ class DownloadKit(object):
             return 20
 
     @timeout.setter
-    def timeout(self, seconds: Union[int, float]) -> None:
-        """设置连接超时时间"""
+    def timeout(self, seconds):
+        """设置连接超时时间
+        :param seconds: 超时时间（秒）
+        :return: None
+        """
         if not isinstance(seconds, (int, float)) or seconds < 0:
             raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
         self._timeout = seconds
 
     @property
-    def waiting_list(self) -> Queue:
+    def waiting_list(self):
         """返回等待队列"""
         return self._waiting_list
 
     @property
-    def session(self) -> Session:
+    def session(self):
         return self._session
 
     @session.setter
-    def session(self, session) -> None:
+    def session(self, session):
+        """设置Session对象
+        :param session: Session对象或DrissionPage的页面对象
+        :return: None
+        """
         try:
-            from DrissionPage import WebPage, MixPage, Drission, SessionPage, SessionOptions
+            from DrissionPage import WebPage, MixPage, Drission, SessionPage, SessionOptions, ChromiumPage
 
             if isinstance(session, SessionOptions):
                 self._session = Drission(driver_or_options=False, session_or_options=session).session
@@ -193,6 +193,9 @@ class DownloadKit(object):
             elif isinstance(session, (SessionPage, WebPage, MixPage)):
                 self._session = session.session
                 self._page = session
+            elif isinstance(session, ChromiumPage):
+                self._session = session.download_set.session
+                self._page = session
             else:
                 self._session = Drission(driver_or_options=False).session
 
@@ -200,14 +203,14 @@ class DownloadKit(object):
             self._session = Session()
 
     @property
-    def is_running(self) -> bool:
+    def is_running(self):
         """返回是否有线程还在运行"""
         return self._running_count > 0
         # return any([i for i in self._missions.values() if not i.is_done])
         # return any(self._threads.values()) or not self.waiting_list.empty()
 
-    def set_proxies(self, http: str = None, https: str = None) -> None:
-        """设置代理地址及端口，例：'http://127.0.0.1:1080'         \n
+    def set_proxies(self, http=None, https=None):
+        """设置代理地址及端口，例：'http://127.0.0.1:1080'
         :param http: http代理地址及端口
         :param https: https代理地址及端口
         :return: None
@@ -218,15 +221,8 @@ class DownloadKit(object):
             https = f'http://{https}'
         self._session.proxies = {'http': http, 'https': https}
 
-    def add(self,
-            file_url: str,
-            goal_path: Union[str, Path] = None,
-            rename: str = None,
-            file_exists: str = None,
-            post_data: Union[str, dict] = None,
-            split: bool = None,
-            **kwargs) -> Mission:
-        """添加一个下载任务并将其返回                                                                    \n
+    def add(self, file_url, goal_path=None, rename=None, file_exists=None, post_data=None, split=None, **kwargs):
+        """添加一个下载任务并将其返回
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
@@ -250,8 +246,11 @@ class DownloadKit(object):
         self._run_or_wait(mission)
         return mission
 
-    def _run_or_wait(self, mission: BaseTask):
-        """接收任务，有空线程则运行，没有则进入等待队列"""
+    def _run_or_wait(self, mission):
+        """接收任务，有空线程则运行，没有则进入等待队列
+        :param mission: 任务对象
+        :return: None
+        """
         thread_id = self._get_usable_thread()
         if thread_id is not None:
             thread = Thread(target=self._run, args=(thread_id, mission), daemon=False)
@@ -260,8 +259,8 @@ class DownloadKit(object):
         else:
             self._waiting_list.put(mission)
 
-    def _run(self, ID: int, mission: BaseTask) -> None:
-        """线程函数                                 \n
+    def _run(self, ID, mission):
+        """线程函数
         :param ID: 线程id
         :param mission: 任务对象，Mission或Task
         :return: None
@@ -283,22 +282,19 @@ class DownloadKit(object):
 
         self._threads[ID] = None
 
-    def get_mission(self, mission_or_id: Union[int, Mission]) -> Mission:
-        """根据id值获取一个任务                 \n
+    def get_mission(self, mission_or_id):
+        """根据id值获取一个任务
         :param mission_or_id: 任务或任务id
         :return: 任务对象
         """
         return self._missions[mission_or_id] if isinstance(mission_or_id, int) else mission_or_id
 
-    def get_failed_missions(self) -> list:
+    def get_failed_missions(self):
         """返回失败任务列表"""
         return [i for i in self._missions.values() if i.result is False]
 
-    def wait(self,
-             mission: Union[int, Mission] = None,
-             show: bool = False,
-             timeout: float = None) -> Union[tuple, None]:
-        """等待所有或指定任务完成                                    \n
+    def wait(self, mission=None, show=False, timeout=None):
+        """等待所有或指定任务完成
         :param mission: 任务对象或任务id，为None时等待所有任务结束
         :param show: 是否显示进度
         :param timeout: 超时时间，默认为连接超时时间，0为无限
@@ -321,8 +317,8 @@ class DownloadKit(object):
         for m in self._missions.values():
             m.cancel()
 
-    def show(self, asyn: bool = True, keep: bool = False) -> None:
-        """实时显示所有线程进度                 \n
+    def show(self, asyn=True, keep=False):
+        """实时显示所有线程进度
         :param asyn: 是否以异步方式显示
         :param keep: 任务列表为空时是否保持显示
         :return: None
@@ -332,8 +328,12 @@ class DownloadKit(object):
         else:
             self._show(0.1, keep)
 
-    def _show(self, wait: float, keep: bool = False) -> None:
-        """实时显示所有线程进度"""
+    def _show(self, wait, keep=False):
+        """实时显示所有线程进度
+        :param wait: 超时时间（秒）
+        :param keep: 任务列表为空时是否保持显示
+        :return: None
+        """
         self._stop_printing = False
 
         if keep:
@@ -363,12 +363,8 @@ class DownloadKit(object):
 
         print()
 
-    def _connect(self,
-                 url: str,
-                 mode: str = 'get',
-                 data: Union[dict, str] = None,
-                 **kwargs) -> Tuple[Union[Response, None], str]:
-        """生成response对象                                                   \n
+    def _connect(self, url, mode='get', data=None, **kwargs):
+        """生成response对象
         :param url: 目标url
         :param mode: 'get', 'post' 中选择
         :param data: post方式要提交的数据
@@ -406,7 +402,7 @@ class DownloadKit(object):
                     r = session.post(url, data=data, **kwargs)
 
                 if r:
-                    return _set_charset(r), 'Success'
+                    return set_charset(r), 'Success'
 
             except Exception as e:
                 err = e
@@ -422,19 +418,19 @@ class DownloadKit(object):
         if not r.ok:
             return r, f'状态码：{r.status_code}'
 
-    def _get_usable_thread(self) -> Union[int, None]:
+    def _get_usable_thread(self):
         """获取可用线程，没有则返回None"""
         for k, v in self._threads.items():
             if v is None:
                 return k
 
-    def _stop_show(self) -> None:
+    def _stop_show(self):
         """设置停止打印的变量"""
         input()
         self._stop_printing = True
 
-    def _when_mission_done(self, mission: Mission) -> None:
-        """当任务完成时执行的操作                     \n
+    def _when_mission_done(self, mission):
+        """当任务完成时执行的操作
         :param mission: 完结的任务
         :return: None
         """
@@ -450,10 +446,8 @@ class DownloadKit(object):
                     'kwargs': mission.data.kwargs}
             self._logger.add_data(data)
 
-    def _download(self,
-                  mission_or_task: Union[Mission, Task],
-                  thread_id: int) -> None:
-        """此方法是执行下载的线程方法，用于根据任务下载文件     \n
+    def _download(self, mission_or_task, thread_id):
+        """此方法是执行下载的线程方法，用于根据任务下载文件
         :param mission_or_task: 下载任务对象
         :param thread_id: 线程号
         :return: None
@@ -520,7 +514,7 @@ class DownloadKit(object):
             return
 
         # -------------------获取文件信息-------------------
-        file_info = _get_file_info(r, goal_path, rename, file_exists, self._lock)
+        file_info = get_file_info(r, goal_path, rename, file_exists, self._lock)
         file_size = file_info['size']
         full_path = file_info['path']
         mission.path = full_path
@@ -558,7 +552,7 @@ class DownloadKit(object):
 
 
 def _do_download(r: Response, task: Task, first: bool = False):
-    """执行下载任务                                    \n
+    """执行下载任务
     :param r: Response对象
     :param task: 任务
     :param first: 是否第一个分块
