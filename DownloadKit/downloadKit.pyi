@@ -6,7 +6,7 @@
 from pathlib import Path
 from queue import Queue
 from threading import Lock
-from typing import Union, Tuple
+from typing import Union, Tuple, Any
 
 from DataRecorder import Recorder
 from DrissionPage.base import BasePage
@@ -51,7 +51,19 @@ class DownloadKit(object):
                  file_exists: str = None,
                  post_data: Union[str, dict] = None,
                  show_msg: bool = True,
-                 **kwargs) -> tuple: ...
+                 timeout: Union[float | None] = None,
+                 params: Union[dict | None] = ...,
+                 json: Union[dict, str, None] = ...,
+                 headers: Union[dict | None] = ...,
+                 cookies: Any = ...,
+                 files: Any = ...,
+                 auth: Any = ...,
+                 allow_redirects: bool = ...,
+                 proxies: Union[dict | None] = ...,
+                 hooks: Any = ...,
+                 stream: Any = ...,
+                 verify: Any = ...,
+                 cert: Any = ...) -> tuple: ...
 
     def set_print(self) -> LogMode: ...
 
@@ -93,6 +105,9 @@ class DownloadKit(object):
     @property
     def is_running(self) -> bool: ...
 
+    @property
+    def missions(self) -> dict: ...
+
     def set_proxies(self, http: str = None, https: str = None) -> None: ...
 
     def add(self,
@@ -102,7 +117,19 @@ class DownloadKit(object):
             file_exists: str = None,
             post_data: Union[str, dict] = None,
             split: bool = None,
-            **kwargs) -> Mission: ...
+            timeout: Union[float | None] = None,
+            params: Union[dict | None] = ...,
+            json: Union[dict, str, None] = ...,
+            headers: Union[dict | None] = ...,
+            cookies: Any = ...,
+            files: Any = ...,
+            auth: Any = ...,
+            allow_redirects: bool = ...,
+            proxies: Union[dict | None] = ...,
+            hooks: Any = ...,
+            stream: Any = ...,
+            verify: Any = ...,
+            cert: Any = ...) -> Mission: ...
 
     def _run_or_wait(self, mission: BaseTask): ...
 

@@ -209,6 +209,10 @@ class DownloadKit(object):
         # return any([i for i in self._missions.values() if not i.is_done])
         # return any(self._threads.values()) or not self.waiting_list.empty()
 
+    @property
+    def missions(self):
+        return self._missions
+
     def set_proxies(self, http=None, https=None):
         """设置代理地址及端口，例：'http://127.0.0.1:1080'
         :param http: http代理地址及端口
