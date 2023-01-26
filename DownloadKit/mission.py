@@ -13,12 +13,23 @@ from DataRecorder import ByteRecorder
 class MissionData(object):
     """保存任务数据的对象"""
 
-    def __init__(self, url, goal_path, rename, file_exists, post_data, split, kwargs):
+    def __init__(self, url, goal_path, rename, file_exists, data, json, split, kwargs):
+        """
+        :param url: 下载文件url
+        :param goal_path: 保存文件夹
+        :param rename: 文件重命名
+        :param file_exists: 存在重名文件时处理方式
+        :param data: post方式的data参数
+        :param json: post方式的json参数
+        :param split: 是否允许分块下载
+        :param kwargs: requests其它参数
+        """
         self.url = url
         self.goal_path = goal_path
         self.rename = rename
         self.file_exists = file_exists
-        self.post_data = post_data
+        self.post_data = data
+        self.post_json = json
         self.split = split
         self.kwargs = kwargs
 

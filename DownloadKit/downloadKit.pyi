@@ -49,7 +49,6 @@ class DownloadKit(object):
                  goal_path: Union[str, Path] = None,
                  rename: str = None,
                  file_exists: str = None,
-                 post_data: Union[str, dict] = None,
                  show_msg: bool = True,
                  timeout: Union[float | None] = None,
                  params: Union[dict | None] = ...,
@@ -115,7 +114,7 @@ class DownloadKit(object):
             goal_path: Union[str, Path] = None,
             rename: str = None,
             file_exists: str = None,
-            post_data: Union[str, dict] = None,
+            data: Union[str, dict] = None,
             split: bool = None,
             timeout: Union[float | None] = None,
             params: Union[dict | None] = ...,
@@ -154,6 +153,7 @@ class DownloadKit(object):
                  url: str,
                  mode: str = 'get',
                  data: Union[dict, str] = None,
+                 json: Union[dict, str] = None,
                  **kwargs) -> Tuple[Union[Response, None], str]: ...
 
     def _get_usable_thread(self) -> Union[int, None]: ...

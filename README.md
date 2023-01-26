@@ -165,7 +165,6 @@ d.file_exists = 'skip'
 - goal_path：保存路径
 - rename：重命名的文件名
 - file_exists：遇到同名文件时的处理方式，可选`'skip'`,`'overwrite'`,`'rename'`，默认跟随实例属性
-- post_data：post 方式使用的数据
 - split：是否允许多线分块下载
 - kwargs：连接参数，与 requests 的参数使用方法一致
 

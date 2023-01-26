@@ -56,14 +56,12 @@ class DownloadKit(object):
         self.block_size: Union[str, int] = '50M'  # 分块大小
         self.session = session
 
-    def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, post_data=None,
-                 show_msg=True, **kwargs):
+    def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
         """以阻塞的方式下载一个文件并返回结果
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
-        :param post_data: post方式使用的数据
         :param show_msg: 是否打印进度
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
@@ -72,7 +70,6 @@ class DownloadKit(object):
                         goal_path=goal_path,
                         rename=rename,
                         file_exists=file_exists,
-                        post_data=post_data,
                         split=False,
                         **kwargs).wait(show=show_msg)
 
@@ -225,22 +222,28 @@ class DownloadKit(object):
             https = f'http://{https}'
         self._session.proxies = {'http': http, 'https': https}
 
-    def add(self, file_url, goal_path=None, rename=None, file_exists=None, post_data=None, split=None, **kwargs):
+    def add(self, file_url, goal_path=None, rename=None, file_exists=None, split=None, **kwargs):
         """添加一个下载任务并将其返回
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
         :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
-        :param post_data: post方式使用的数据
         :param split: 是否允许多线程分块下载，为None则使用对象属性
         :param kwargs: 连接参数
         :return: 任务对象
         """
+        post_data = kwargs.get('data', None)
+        post_json = kwargs.get('json', None)
+        if 'data' in kwargs:
+            kwargs = kwargs.pop('data')
+        if 'json' in kwargs:
+            kwargs = kwargs.pop('json')
         data = MissionData(url=file_url,
                            goal_path=str(goal_path or self.goal_path),
                            rename=rename,
                            file_exists=file_exists or self.file_exists,
-                           post_data=post_data,
+                           data=post_data,
+                           json=post_json,
                            split=self.split if split is None else split,
                            kwargs=kwargs)
         self._missions_num += 1
@@ -367,11 +370,12 @@ class DownloadKit(object):
 
         print()
 
-    def _connect(self, url, mode='get', data=None, **kwargs):
+    def _connect(self, url, mode='get', data=None,json=None,  **kwargs):
         """生成response对象
         :param url: 目标url
         :param mode: 'get', 'post' 中选择
         :param data: post方式要提交的数据
+        :param json: post方式要提交的数据
         :param kwargs: 连接参数
         :return: tuple，第一位为Response或None，第二位为出错信息或'Success'
         """
@@ -403,7 +407,7 @@ class DownloadKit(object):
                 if mode == 'get':
                     r = session.get(url, **kwargs)
                 elif mode == 'post':
-                    r = session.post(url, data=data, **kwargs)
+                    r = session.post(url, data=data, json=json, **kwargs)
 
                 if r:
                     return set_charset(r), 'Success'
@@ -447,6 +451,7 @@ class DownloadKit(object):
                     'path': mission.data.goal_path,
                     'rename': mission.data.rename,
                     'post_data': mission.data.post_data,
+                    'post_json': mission.data.post_json,
                     'kwargs': mission.data.kwargs}
             self._logger.add_data(data)
 
@@ -464,6 +469,7 @@ class DownloadKit(object):
 
         file_url = mission_or_task.data.url
         post_data = mission_or_task.data.post_data
+        post_json = mission_or_task.data.post_json
         kwargs = mission_or_task.data.kwargs
 
         if isinstance(mission_or_task, Task):
@@ -474,8 +480,8 @@ class DownloadKit(object):
             else:
                 kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
 
-            mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-            r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
+            mode = 'post' if post_data is not None or post_json is not None else 'get'
+            r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
 
             if r:
                 _do_download(r, task, False)
@@ -507,8 +513,8 @@ class DownloadKit(object):
             mission.set_done('skip', str(mission.path))
             return
 
-        mode = 'post' if post_data is not None or kwargs.get('json', None) else 'get'
-        r, inf = self._connect(file_url, mode=mode, data=post_data, **kwargs)
+        mode = 'post' if post_data is not None or post_json is not None else 'get'
+        r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
 
         if mission.is_done:
             return
