@@ -180,31 +180,22 @@ class DownloadKit(object):
         :param session: Session对象或DrissionPage的页面对象
         :return: None
         """
-        try:
-            from DrissionPage import WebPage, SessionPage, SessionOptions, ChromiumPage
-            from DrissionPage.session_page import set_session
-
-            if isinstance(session, SessionOptions):
-                self._session = set_session(session)
-            elif isinstance(session, (SessionPage, WebPage)):
-                self._session = session.session
-                self._page = session
-            elif isinstance(session, ChromiumPage):
-                self._session = session.download_set.session
-                self._page = session
-
-        except ImportError:
-            try:
-                from DrissionPage import MixPage, Drission
-                if isinstance(session, Drission):
-                    self._session = session.session
-                elif isinstance(session, MixPage):
-                    self._session = session.session
-                    self._page = session
-
-            except ImportError:
-
-                self._session = Session()
+        the_type = str(type(session))
+        if 'SessionPage' in the_type or 'WebPage' in the_type:
+            self._session = session.session
+            self._page = session
+        elif 'ChromiumPage' in the_type:
+            self._session = session.download_set.session
+            self._page = session
+        elif 'SessionOptions' in the_type:
+            self._session = session.make_session()
+        elif 'MixPage' in the_type:
+            self._session = session.session
+            self._page = session
+        elif 'Drission' in the_type:
+            self._session = session.session
+        else:
+            self._session = Session()
 
     @property
     def is_running(self):
