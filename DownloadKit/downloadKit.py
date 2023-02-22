@@ -181,23 +181,30 @@ class DownloadKit(object):
         :return: None
         """
         try:
-            from DrissionPage import WebPage, MixPage, Drission, SessionPage, SessionOptions, ChromiumPage
+            from DrissionPage import WebPage, SessionPage, SessionOptions, ChromiumPage
+            from DrissionPage.session_page import set_session
 
             if isinstance(session, SessionOptions):
-                self._session = Drission(driver_or_options=False, session_or_options=session).session
-            elif isinstance(session, Drission):
-                self._session = session.session
-            elif isinstance(session, (SessionPage, WebPage, MixPage)):
+                self._session = set_session(session)
+            elif isinstance(session, (SessionPage, WebPage)):
                 self._session = session.session
                 self._page = session
             elif isinstance(session, ChromiumPage):
                 self._session = session.download_set.session
                 self._page = session
-            else:
-                self._session = Drission(driver_or_options=False).session
 
         except ImportError:
-            self._session = Session()
+            try:
+                from DrissionPage import MixPage, Drission
+                if isinstance(session, Drission):
+                    self._session = session.session
+                elif isinstance(session, MixPage):
+                    self._session = session.session
+                    self._page = session
+
+            except ImportError:
+
+                self._session = Session()
 
     @property
     def is_running(self):
@@ -370,7 +377,7 @@ class DownloadKit(object):
 
         print()
 
-    def _connect(self, url, mode='get', data=None,json=None,  **kwargs):
+    def _connect(self, url, mode='get', data=None, json=None, **kwargs):
         """生成response对象
         :param url: 目标url
         :param mode: 'get', 'post' 中选择
