@@ -180,22 +180,53 @@ class DownloadKit(object):
         :param session: Session对象或DrissionPage的页面对象
         :return: None
         """
-        the_type = str(type(session))
-        if 'SessionPage' in the_type or 'WebPage' in the_type:
-            self._session = session.session
-            self._page = session
-        elif 'ChromiumPage' in the_type:
-            self._session = session.download_set.session
-            self._page = session
-        elif 'SessionOptions' in the_type:
-            self._session = session.make_session()
-        elif 'MixPage' in the_type:
-            self._session = session.session
-            self._page = session
-        elif 'Drission' in the_type:
-            self._session = session.session
-        else:
-            self._session = Session()
+        if isinstance(session, Session):
+            self._session = session
+            return
+
+        try:
+            from DrissionPage import WebPage, SessionPage, SessionOptions
+            from DrissionPage.chromium_tab import WebPageTab
+            from DrissionPage.chromium_base import ChromiumBase
+            if isinstance(session, (WebPage, WebPageTab, SessionPage)):
+                self._session = session.session
+                self._page = session
+                return
+            elif isinstance(session, ChromiumBase):
+                self._session = session.download_set.session
+                self._page = session
+                return
+            elif isinstance(session, SessionOptions):
+                self._session = session.make_session()
+                return
+        except ModuleNotFoundError:
+            pass
+
+        try:
+            from MixPage import MixPage, Drission
+            if isinstance(session, MixPage):
+                self._session = session.session
+                self._page = session
+                return
+            elif isinstance(session, Drission):
+                self._session = session.session
+                return
+        except ModuleNotFoundError:
+            pass
+
+        try:
+            from DrissionPage import MixPage, Drission
+            if isinstance(session, MixPage):
+                self._session = session.session
+                self._page = session
+                return
+            elif isinstance(session, Drission):
+                self._session = session.session
+                return
+        except (ModuleNotFoundError, ImportError):
+            pass
+
+        self._session = Session()
 
     @property
     def is_running(self):
