@@ -15,7 +15,8 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, \
+    set_session_cookies
 from .mission import Task, Mission, MissionData
 
 
@@ -43,8 +44,9 @@ class DownloadKit(object):
         self._retry = None
         self._interval = None
         self._timeout = None
+        self._is_BasePage = False
 
-        self._log_setter = None
+        self._setter = None
         self._print_mode = None
         self._log_mode = None
         self._logger = None
@@ -52,7 +54,7 @@ class DownloadKit(object):
         self.goal_path = goal_path or '.'
         self.file_exists = file_exists
         self.split = True
-        self.block_size = '50M'  # 分块大小
+        self.block_size = '50M'
         self.session = session
 
     def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
@@ -79,11 +81,11 @@ class DownloadKit(object):
         return r
 
     @property
-    def log_set(self):
+    def set(self):
         """用于设置打印和记录模式的对象"""
-        if self._log_setter is None:
-            self._log_setter = LogSetter(self)
-        return self._log_setter
+        if self._setter is None:
+            self._setter = Setter(self)
+        return self._setter
 
     @property
     def roads(self):
@@ -91,14 +93,9 @@ class DownloadKit(object):
         return self._roads
 
     @roads.setter
-    def roads(self, val):
+    def roads(self, num):
         """设置可同时运行的线程数"""
-        if self.is_running:
-            print('有任务未完成时不能改变roads。')
-            return
-        if val != self._roads:
-            self._roads = val
-            self._threads = {i: None for i in range(self._roads)}
+        self.set.roads(num)
 
     @property
     def retry(self):
@@ -113,9 +110,7 @@ class DownloadKit(object):
     @retry.setter
     def retry(self, times):
         """设置连接失败时重试次数"""
-        if not isinstance(times, int) or times < 0:
-            raise TypeError('times参数只能接受int格式且不能小于0。')
-        self._retry = times
+        self.set.retry(times)
 
     @property
     def interval(self):
@@ -133,9 +128,7 @@ class DownloadKit(object):
         :param seconds: 连接失败时重试间隔（秒）
         :return: None
         """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._interval = seconds
+        self.set.interval(seconds)
 
     @property
     def timeout(self):
@@ -153,9 +146,7 @@ class DownloadKit(object):
         :param seconds: 超时时间（秒）
         :return: None
         """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._timeout = seconds
+        self.set.timeout(seconds)
 
     @property
     def waiting_list(self):
@@ -172,6 +163,7 @@ class DownloadKit(object):
         :param session: Session对象或DrissionPage的页面对象
         :return: None
         """
+        self._is_BasePage = False
         if isinstance(session, Session):
             self._session = session
             return
@@ -187,6 +179,7 @@ class DownloadKit(object):
             elif isinstance(session, ChromiumBase):
                 self._session = session.download_set.session
                 self._page = session
+                self._is_BasePage = True
                 return
             elif isinstance(session, SessionOptions):
                 self._session = session.make_session()
@@ -195,8 +188,8 @@ class DownloadKit(object):
             pass
 
         try:
-            from MixPage import MixPage, Drission
-            if isinstance(session, MixPage):
+            from MixPage import MixPage, Drission, SessionPage as sp
+            if isinstance(session, (MixPage, sp)):
                 self._session = session.session
                 self._page = session
                 return
@@ -237,11 +230,7 @@ class DownloadKit(object):
         :param https: https代理地址及端口
         :return: None
         """
-        if not http.startswith('http://'):
-            http = f'http://{http}'
-        if not https.startswith('http'):
-            https = f'http://{https}'
-        self._session.proxies = {'http': http, 'https': https}
+        self.set.proxies(http=http, https=https)
 
     def add(self, file_url, goal_path=None, rename=None, file_exists=None, split=None, **kwargs):
         """添加一个下载任务并将其返回
@@ -272,10 +261,6 @@ class DownloadKit(object):
         mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
-        # if self._print_mode == 'all':
-        #     print(f'加入队列：{file_url}')
-        # if self._log_mode == 'all':
-        #     self._logger.add_data(('加入队列', file_url))
         return mission
 
     def _run_or_wait(self, mission):
@@ -407,6 +392,8 @@ class DownloadKit(object):
         url = quote(url, safe='/:&?=%;#@+!')
         kwargs = CaseInsensitiveDict(kwargs)
         session = copy_session(self.session)
+        if self._is_BasePage:
+            set_session_cookies(session, self._page.get_cookies(as_dict=False, all_info=False))
 
         if 'headers' not in kwargs:
             kwargs['headers'] = {}
@@ -654,33 +641,158 @@ def _do_download(r: Response, task: Task, first: bool = False):
     task.set_done(result=result, info=info)
 
 
-class LogSetter(object):
+class Setter(object):
     def __init__(self, downloadKit):
         self._downloadKit: DownloadKit = downloadKit
 
+    @property
+    def DownloadKit(self):
+        """返回使用的DownloadKit对象"""
+        return self._downloadKit
+
+    @property
+    def if_file_exists(self):
+        """返回用于设置文件同名策略的对象"""
+        return FileExists(self)
+
+    @property
+    def log_set(self):
+        """返回用于设置记录模式的对象"""
+        return LogSet(self)
+
+    def driver(self, driver):
+        """设置用于下载的Session对象
+        :param driver: Session对象、DrissionPage页面对象或MixPage页面对象
+        :return: None
+        """
+        self._downloadKit.session = driver
+
+    def roads(self, num):
+        """设置可同时运行的线程数"""
+        if self._downloadKit.is_running:
+            print('有任务未完成时不能改变roads。')
+            return
+        if num != self._downloadKit.roads:
+            self._downloadKit._roads = num
+            self._downloadKit._threads = {i: None for i in range(num)}
+
+    def retry(self, times):
+        """设置连接失败时重试次数"""
+        if not isinstance(times, int) or times < 0:
+            raise TypeError('times参数只能接受int格式且不能小于0。')
+        self._downloadKit._retry = times
+
+    def interval(self, seconds):
+        """设置连接失败时重试间隔
+        :param seconds: 连接失败时重试间隔（秒）
+        :return: None
+        """
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
+        self._downloadKit._interval = seconds
+
+    def timeout(self, seconds):
+        """设置连接超时时间
+        :param seconds: 超时时间（秒）
+        :return: None
+        """
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
+        self._downloadKit._timeout = seconds
+
+    def goal_path(self, path):
+        """设置文件保存路径"""
+        self._downloadKit.goal_path = path
+
+    def split(self, on_off):
+        """设置大文件是否分块下载"""
+        self._downloadKit.split = on_off
+
+    def block_size(self, size):
+        """设置分块大小
+        :param size: 单位为字节，可用'K'、'M'、'G'为单位，如'50M'
+        :return: None
+        """
+        self._downloadKit.block_size = size
+
+    def proxies(self, http=None, https=None):
+        """设置代理地址及端口，例：'http://127.0.0.1:1080'
+        :param http: http代理地址及端口
+        :param https: https代理地址及端口
+        :return: None
+        """
+        if not http.startswith('http://'):
+            http = f'http://{http}'
+        if not https.startswith('http'):
+            https = f'http://{https}'
+        self._downloadKit._session.proxies = {'http': http, 'https': https}
+
+
+class LogSet(object):
+    def __init__(self, setter):
+        self._setter = setter
+
     def log_path(self, log_path):
-        if self._downloadKit._logger is not None:
-            self._downloadKit._logger.record()
-        self._downloadKit._logger = Recorder(log_path)
+        """设置日志文件路径"""
+        if self._setter.DownloadKit._logger is not None:
+            self._setter.DownloadKit._logger.record()
+        self._setter.DownloadKit._logger = Recorder(log_path)
 
     def print_all(self):
-        self._downloadKit._print_mode = 'all'
+        """打印所有信息"""
+        self._setter.DownloadKit._print_mode = 'all'
 
     def print_fail(self):
-        self._downloadKit._print_mode = 'fail'
+        """只有在下载失败时打印信息"""
+        self._setter.DownloadKit._print_mode = 'fail'
 
     def print_nothing(self):
-        self._downloadKit._print_mode = None
+        """不打印任何信息"""
+        self._setter.DownloadKit._print_mode = None
 
     def log_all(self):
-        if self._downloadKit._logger is None:
+        """记录所有信息"""
+        if self._setter.DownloadKit._logger is None:
             raise RuntimeError('请先用log_path()设置log文件路径。')
-        self._downloadKit._log_mode = 'all'
+        self._setter.DownloadKit._log_mode = 'all'
 
     def log_fail(self):
-        if self._downloadKit._logger is None:
+        """只记录下载失败的信息"""
+        if self._setter.DownloadKit._logger is None:
             raise RuntimeError('请先用log_path()设置log文件路径。')
-        self._downloadKit._log_mode = 'fail'
+        self._setter.DownloadKit._log_mode = 'fail'
 
     def log_nothing(self):
-        self._downloadKit._log_mode = None
+        """不进行记录"""
+        self._setter.DownloadKit._log_mode = None
+
+
+class FileExists(object):
+    """用于设置存在同名文件时处理方法"""
+
+    def __init__(self, setter):
+        """
+        :param setter: DownloadSetter对象
+        """
+        self._setter = setter
+
+    def __call__(self, mode):
+        """设置文件存在时的处理方式
+        :param mode: 'skip', 'rename', 'overwrite'
+        :return: None
+        """
+        if mode not in ('skip', 'rename', 'overwrite'):
+            raise ValueError("mode参数只能是'skip', 'rename', 'overwrite'")
+        self._setter.DownloadKit.file_exists = mode
+
+    def skip(self):
+        """设为跳过"""
+        self._setter.DownloadKit.file_exists = 'skip'
+
+    def rename(self):
+        """设为重命名，文件名后加序号"""
+        self._setter.DownloadKit.file_exists = 'rename'
+
+    def overwrite(self):
+        """设为覆盖"""
+        self._setter.DownloadKit.file_exists = 'overwrite'

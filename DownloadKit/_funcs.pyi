@@ -48,3 +48,6 @@ def get_file_info(response: Response,
                   rename: str = None,
                   file_exists: str = None,
                   lock: Lock = None) -> dict: ...
+
+
+def set_session_cookies(session: Session, cookies: list) -> None: ...
