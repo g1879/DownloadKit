@@ -31,19 +31,6 @@ class FileExistsSetter(object):
     def __get__(self, file_exists, objtype=None): ...
 
 
-class LogMode(object):
-    """设置记录或打印哪些任务信息"""
-
-    def __init__(self):
-        self.log_mode: str = ...
-
-    def all(self) -> None: ...
-
-    def none(self) -> None: ...
-
-    def fail(self) -> None: ...
-
-
 def get_usable_path(path: Union[str, Path]) -> Path: ...
 
 

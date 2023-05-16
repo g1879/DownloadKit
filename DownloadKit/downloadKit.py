@@ -9,14 +9,13 @@ from queue import Queue
 from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
-from typing import Union
 from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, LogMode
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info
 from .mission import Task, Mission, MissionData
 
 
@@ -45,15 +44,15 @@ class DownloadKit(object):
         self._interval = None
         self._timeout = None
 
+        self._log_setter = None
         self._print_mode = None
         self._log_mode = None
         self._logger = None
 
-        self.goal_path: str = goal_path or '.'
-        self.file_exists: str = file_exists
-        self.show_errmsg: bool = False
-        self.split: bool = True
-        self.block_size: Union[str, int] = '50M'  # 分块大小
+        self.goal_path = goal_path or '.'
+        self.file_exists = file_exists
+        self.split = True
+        self.block_size = '50M'  # 分块大小
         self.session = session
 
     def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
@@ -66,32 +65,25 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
         """
-        return self.add(file_url=file_url,
-                        goal_path=goal_path,
-                        rename=rename,
-                        file_exists=file_exists,
-                        split=False,
-                        **kwargs).wait(show=show_msg)
+        if show_msg:
+            tmp = self._print_mode
+            self._print_mode = None
+        r = self.add(file_url=file_url,
+                     goal_path=goal_path,
+                     rename=rename,
+                     file_exists=file_exists,
+                     split=False,
+                     **kwargs).wait(show=show_msg)
+        if show_msg:
+            self._print_mode = tmp
+        return r
 
-    def set_print(self):
-        """设置打印到控制台的信息，可选全部、错误任务、不打印"""
-        if self._print_mode is None:
-            self._print_mode = LogMode()
-        return self._print_mode
-
-    def set_log(self, log_path=None):
-        """设置记录到文件的信息，可选全部、错误任务、不记录
-        :param log_path: 记录文件路径
-        :return: LogMode对象
-        """
-        if self._log_mode is None:
-            self._log_mode = LogMode()
-        if log_path is not None:
-            if self._logger is not None:
-                self._logger.set_path(log_path)
-            else:
-                self._logger = Recorder(log_path, 1)
-        return self._log_mode
+    @property
+    def log_set(self):
+        """用于设置打印和记录模式的对象"""
+        if self._log_setter is None:
+            self._log_setter = LogSetter(self)
+        return self._log_setter
 
     @property
     def roads(self):
@@ -280,6 +272,10 @@ class DownloadKit(object):
         mission = Mission(self._missions_num, data, self)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
+        # if self._print_mode == 'all':
+        #     print(f'加入队列：{file_url}')
+        # if self._log_mode == 'all':
+        #     self._logger.add_data(('加入队列', file_url))
         return mission
 
     def _run_or_wait(self, mission):
@@ -472,16 +468,17 @@ class DownloadKit(object):
         :return: None
         """
         self._running_count -= 1
-        if self.set_print().log_mode == 'all' or (self.set_print().log_mode == 'fail' and mission.result is False):
-            print(f'{mission.data.url}\n{mission.result}\n{mission.info}\n')
+        if self._print_mode == 'all' or (self._print_mode == 'fail' and mission.result is False):
+            print(f'下载结果：{mission.data.url} {mission.result} {mission.info}')
 
-        if self.set_log().log_mode == 'all' or (self.set_log().log_mode == 'fail' and mission.result is False):
-            data = {'url': mission.data.url,
-                    'path': mission.data.goal_path,
-                    'rename': mission.data.rename,
-                    'post_data': mission.data.post_data,
-                    'post_json': mission.data.post_json,
-                    'kwargs': mission.data.kwargs}
+        if self._log_mode == 'all' or (self._log_mode == 'fail' and mission.result is False):
+            data = ('下载结果',
+                    mission.data.url,
+                    mission.data.goal_path,
+                    mission.data.rename,
+                    mission.data.post_data,
+                    mission.data.post_json,
+                    mission.data.kwargs)
             self._logger.add_data(data)
 
     def _download(self, mission_or_task, thread_id):
@@ -523,6 +520,10 @@ class DownloadKit(object):
         mission = mission_or_task
         mission.info = '下载中'
         mission.state = 'running'
+        if self._print_mode == 'all':
+            print(f'开始下载：{mission.data.url}')
+        if self._log_mode == 'all':
+            self._logger.add_data(('开始下载', mission.data.url))
 
         rename = mission.data.rename
         goal_path = mission.data.goal_path
@@ -651,3 +652,35 @@ def _do_download(r: Response, task: Task, first: bool = False):
         r.close()
 
     task.set_done(result=result, info=info)
+
+
+class LogSetter(object):
+    def __init__(self, downloadKit):
+        self._downloadKit: DownloadKit = downloadKit
+
+    def log_path(self, log_path):
+        if self._downloadKit._logger is not None:
+            self._downloadKit._logger.record()
+        self._downloadKit._logger = Recorder(log_path)
+
+    def print_all(self):
+        self._downloadKit._print_mode = 'all'
+
+    def print_fail(self):
+        self._downloadKit._print_mode = 'fail'
+
+    def print_nothing(self):
+        self._downloadKit._print_mode = None
+
+    def log_all(self):
+        if self._downloadKit._logger is None:
+            raise RuntimeError('请先用log_path()设置log文件路径。')
+        self._downloadKit._log_mode = 'all'
+
+    def log_fail(self):
+        if self._downloadKit._logger is None:
+            raise RuntimeError('请先用log_path()设置log文件路径。')
+        self._downloadKit._log_mode = 'fail'
+
+    def log_nothing(self):
+        self._downloadKit._log_mode = None
