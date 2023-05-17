@@ -37,6 +37,7 @@ class MissionData(object):
 class BaseTask(object):
     """任务类基类"""
     _DONE = 'done'
+    RESULT_TEXTS = {'success': '成功', 'skipped': '跳过', 'canceled': '取消', False: '失败', None: '未知'}
 
     def __init__(self, ID):
         """初始化                   \n
@@ -44,7 +45,7 @@ class BaseTask(object):
         """
         self._id = ID
         self.state = 'waiting'  # 状态：'waiting'、'running'、'done'
-        self.result = None  # 结果：'success'、'skip'、'cancel'、False、None
+        self.result = None  # 结果：'success'、'skipped'、'canceled'、False、None
         self.info = '等待下载'  # 信息
 
     @property
@@ -60,11 +61,11 @@ class BaseTask(object):
     @property
     def is_done(self):
         """返回任务是否结束"""
-        return self.state == self._DONE
+        return self.state in ('done', 'cancel')
 
     def set_states(self, result=None, info=None, state='done'):
         """设置任务结果值                                                  \n
-        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param result: 结果：'success'、'skipped'、'canceled'、False、None
         :param info: 任务信息
         :param state: 任务状态：'waiting'、'running'、'done'
         :return: None
@@ -136,14 +137,14 @@ class Mission(BaseTask):
 
     def set_done(self, result, info):
         """设置一个任务为done状态                                          \n
-        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param result: 结果：'success'、'skipped'、'canceled'、False、None
         :param info: 任务信息
         :return: None
         """
-        if result == 'skip':
+        if result == 'skipped':
             self.set_states(result=result, info=info, state=self._DONE)
 
-        elif result == 'cancel' or result is False:
+        elif result == 'canceled' or result is False:
             self.recorder.clear()
             self.set_states(result=result, info=info, state=self._DONE)
 
@@ -176,7 +177,7 @@ class Mission(BaseTask):
 
     def break_mission(self, result, info):
         """中止该任务，停止未下载完的task                                  \n
-        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param result: 结果：'success'、'skipped'、'canceled'、False、None
         :param info: 任务信息
         :return: None
         """
@@ -188,14 +189,14 @@ class Mission(BaseTask):
                 task.set_states(result=result, info=info, state='cancel')
 
         while any((not i.is_done for i in self.tasks)):
-            sleep(.1)
+            sleep(.3)
 
         self.set_done(result, info)
         self.del_file()
 
     def cancel(self) -> None:
         """取消该任务，停止未下载完的task"""
-        self.break_mission('cancel', '已取消')
+        self.break_mission('canceled', '已取消')
 
     def del_file(self):
         """删除下载的文件"""
@@ -238,7 +239,7 @@ class Mission(BaseTask):
             elif self.result == 'success':
                 print('\r100% ', end='')
                 print(f'下载完成 {self.info}')
-            elif self.result == 'skip':
+            elif self.result == 'skipped':
                 print(f'已跳过 {self.info}')
             print()
 
@@ -289,9 +290,13 @@ class Task(BaseTask):
         """
         self.mission.recorder.add_data(data, seek)
 
+    def clear_cache(self):
+        """清除以接收但未写入硬盘的缓存"""
+        self.mission.recorder.clear()
+
     def set_done(self, result, info):
         """设置一个子任务为done状态                                          \n
-        :param result: 结果：'success'、'skip'、'cancel'、False、None
+        :param result: 结果：'success'、'skipped'、'canceled'、False、None
         :param info: 任务信息
         :return: None
         """

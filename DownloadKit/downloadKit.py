@@ -67,18 +67,8 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
         """
-        if show_msg:
-            tmp = self._print_mode
-            self._print_mode = None
-        r = self.add(file_url=file_url,
-                     goal_path=goal_path,
-                     rename=rename,
-                     file_exists=file_exists,
-                     split=False,
-                     **kwargs).wait(show=show_msg)
-        if show_msg:
-            self._print_mode = tmp
-        return r
+        return self.download(file_url=file_url, goal_path=goal_path, rename=rename, file_exists=file_exists,
+                             show_msg=show_msg, **kwargs)
 
     @property
     def set(self):
@@ -262,6 +252,25 @@ class DownloadKit(object):
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
         return mission
+
+    def download(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
+        """以阻塞的方式下载一个文件并返回结果
+        :param file_url: 文件网址
+        :param goal_path: 保存路径
+        :param rename: 重命名的文件名
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param show_msg: 是否打印进度
+        :param kwargs: 连接参数
+        :return: 任务结果和信息组成的tuple
+        """
+        if show_msg:
+            tmp = self._print_mode
+            self._print_mode = None
+        r = self.add(file_url=file_url, goal_path=goal_path, rename=rename, file_exists=file_exists,
+                     split=False, **kwargs).wait(show=show_msg)
+        if show_msg:
+            self._print_mode = tmp
+        return r
 
     def _run_or_wait(self, mission):
         """接收任务，有空线程则运行，没有则进入等待队列
@@ -455,10 +464,10 @@ class DownloadKit(object):
         :return: None
         """
         self._running_count -= 1
-        if self._print_mode == 'all' or (self._print_mode == 'fail' and mission.result is False):
-            print(f'下载结果：{mission.data.url} {mission.result} {mission.info}')
+        if self._print_mode == 'all' or (self._print_mode == 'failed' and mission.result is False):
+            print(f'[{mission.RESULT_TEXTS[mission.result]}] {mission.data.url} {mission.info}')
 
-        if self._log_mode == 'all' or (self._log_mode == 'fail' and mission.result is False):
+        if self._log_mode == 'all' or (self._log_mode == 'failed' and mission.result is False):
             data = ('下载结果',
                     mission.data.url,
                     mission.data.goal_path,
@@ -527,7 +536,7 @@ class DownloadKit(object):
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
             mission.path = goal_Path / rename
-            mission.set_done('skip', str(mission.path))
+            mission.set_done('skipped', str(mission.path))
             return
 
         mode = 'post' if post_data is not None or post_json is not None else 'get'
@@ -549,7 +558,7 @@ class DownloadKit(object):
         mission.size = file_size
 
         if file_info['skip']:
-            mission.set_done('skip', str(mission.path))
+            mission.set_done('skipped', str(mission.path))
             return
 
         # -------------------设置分块任务-------------------
@@ -593,15 +602,30 @@ def _do_download(r: Response, task: Task, first: bool = False):
     result = None
 
     try:
-        if first:  # 分块时第一块
-            r_content = r.iter_content(chunk_size=task.range[1])
-            task.add_data(next(r_content), 0)
+        if first:  # 分块是第一块
+            if task.range[1] <= block_size or task.range[1] % block_size != 0:
+                r_content = r.iter_content(chunk_size=task.range[1])
+                task.add_data(next(r_content), 0)
+                if task.state in ('cancel', 'done'):
+                    result = 'canceled'
+                    task.clear_cache()
+
+            else:
+                blocks = task.range[1] // block_size
+                r_content = r.iter_content(chunk_size=block_size)
+                for b in range(blocks):
+                    task.add_data(next(r_content), b * block_size)
+                    if task.state in ('cancel', 'done'):
+                        result = 'canceled'
+                        task.clear_cache()
+                        break
 
         else:
             if task.range is None:  # 不分块
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
                         task.add_data(chunk, None)
@@ -610,7 +634,8 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 begin = task.range[0]
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
                         task.add_data(chunk, seek=begin)
@@ -621,7 +646,8 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 num = (end - begin) // block_size
                 for ind, chunk in enumerate(r.iter_content(chunk_size=block_size), 1):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
                         task.add_data(chunk, seek=begin)
@@ -643,6 +669,9 @@ def _do_download(r: Response, task: Task, first: bool = False):
 
 class Setter(object):
     def __init__(self, downloadKit):
+        """
+        :param downloadKit: downloadKit对象
+        """
         self._downloadKit: DownloadKit = downloadKit
 
     @property
@@ -656,7 +685,7 @@ class Setter(object):
         return FileExists(self)
 
     @property
-    def log_set(self):
+    def log_mode(self):
         """返回用于设置记录模式的对象"""
         return LogSet(self)
 
@@ -668,7 +697,10 @@ class Setter(object):
         self._downloadKit.session = driver
 
     def roads(self, num):
-        """设置可同时运行的线程数"""
+        """设置可同时运行的线程数
+        :param num: 线程数量
+        :return: None
+        """
         if self._downloadKit.is_running:
             print('有任务未完成时不能改变roads。')
             return
@@ -677,7 +709,10 @@ class Setter(object):
             self._downloadKit._threads = {i: None for i in range(num)}
 
     def retry(self, times):
-        """设置连接失败时重试次数"""
+        """设置连接失败时重试次数
+        :param times: 重试次数
+        :return: None
+        """
         if not isinstance(times, int) or times < 0:
             raise TypeError('times参数只能接受int格式且不能小于0。')
         self._downloadKit._retry = times
@@ -701,11 +736,17 @@ class Setter(object):
         self._downloadKit._timeout = seconds
 
     def goal_path(self, path):
-        """设置文件保存路径"""
+        """设置文件保存路径
+        :param path: 文件路径，可以是str或Path
+        :return: None
+        """
         self._downloadKit.goal_path = path
 
     def split(self, on_off):
-        """设置大文件是否分块下载"""
+        """设置大文件是否分块下载
+        :param on_off: bool代表开关
+        :return: None
+        """
         self._downloadKit.split = on_off
 
     def block_size(self, size):
@@ -729,11 +770,19 @@ class Setter(object):
 
 
 class LogSet(object):
+    """用于设置信息打印和记录日志方式"""
+
     def __init__(self, setter):
+        """
+        :param setter: Setter对象
+        """
         self._setter = setter
 
     def log_path(self, log_path):
-        """设置日志文件路径"""
+        """设置日志文件路径
+        :param log_path: 文件路径，可以是str或Path
+        :return: None
+        """
         if self._setter.DownloadKit._logger is not None:
             self._setter.DownloadKit._logger.record()
         self._setter.DownloadKit._logger = Recorder(log_path)
@@ -742,9 +791,9 @@ class LogSet(object):
         """打印所有信息"""
         self._setter.DownloadKit._print_mode = 'all'
 
-    def print_fail(self):
+    def print_failed(self):
         """只有在下载失败时打印信息"""
-        self._setter.DownloadKit._print_mode = 'fail'
+        self._setter.DownloadKit._print_mode = 'failed'
 
     def print_nothing(self):
         """不打印任何信息"""
@@ -756,11 +805,11 @@ class LogSet(object):
             raise RuntimeError('请先用log_path()设置log文件路径。')
         self._setter.DownloadKit._log_mode = 'all'
 
-    def log_fail(self):
+    def log_failed(self):
         """只记录下载失败的信息"""
         if self._setter.DownloadKit._logger is None:
             raise RuntimeError('请先用log_path()设置log文件路径。')
-        self._setter.DownloadKit._log_mode = 'fail'
+        self._setter.DownloadKit._log_mode = 'failed'
 
     def log_nothing(self):
         """不进行记录"""
@@ -772,7 +821,7 @@ class FileExists(object):
 
     def __init__(self, setter):
         """
-        :param setter: DownloadSetter对象
+        :param setter: Setter对象
         """
         self._setter = setter
 
