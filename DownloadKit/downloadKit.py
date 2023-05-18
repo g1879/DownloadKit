@@ -15,8 +15,7 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, \
-    set_session_cookies
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info
 from .mission import Task, Mission, MissionData
 
 
@@ -159,15 +158,10 @@ class DownloadKit(object):
             return
 
         try:
-            from DrissionPage import WebPage, SessionPage, SessionOptions
-            from DrissionPage.chromium_tab import WebPageTab
-            from DrissionPage.chromium_base import ChromiumBase
-            if isinstance(session, (WebPage, WebPageTab, SessionPage)):
+            from DrissionPage.base import BasePage
+            from DrissionPage import SessionOptions
+            if isinstance(session, BasePage):
                 self._session = session.session
-                self._page = session
-                return
-            elif isinstance(session, ChromiumBase):
-                self._session = session.download_set.session
                 self._page = session
                 self._is_BasePage = True
                 return
@@ -400,9 +394,7 @@ class DownloadKit(object):
         """
         url = quote(url, safe='/:&?=%;#@+!')
         kwargs = CaseInsensitiveDict(kwargs)
-        session = copy_session(self.session)
-        if self._is_BasePage:
-            set_session_cookies(session, self._page.get_cookies(as_dict=False, all_info=False))
+        session = copy_session(self._page.session) if self._is_BasePage else copy_session(self.session)
 
         if 'headers' not in kwargs:
             kwargs['headers'] = {}
