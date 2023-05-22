@@ -54,7 +54,7 @@ class DownloadKit(object):
         self.file_exists = file_exists
         self.split = True
         self.block_size = '50M'
-        self.session = session
+        self.set.driver(session)
 
     def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
         """以阻塞的方式下载一个文件并返回结果
@@ -81,11 +81,6 @@ class DownloadKit(object):
         """可同时运行的线程数"""
         return self._roads
 
-    @roads.setter
-    def roads(self, num):
-        """设置可同时运行的线程数"""
-        self.set.roads(num)
-
     @property
     def retry(self):
         """返回连接失败时重试次数"""
@@ -95,11 +90,6 @@ class DownloadKit(object):
             return self._page.retry_times
         else:
             return 3
-
-    @retry.setter
-    def retry(self, times):
-        """设置连接失败时重试次数"""
-        self.set.retry(times)
 
     @property
     def interval(self):
@@ -111,14 +101,6 @@ class DownloadKit(object):
         else:
             return 5
 
-    @interval.setter
-    def interval(self, seconds):
-        """设置连接失败时重试间隔
-        :param seconds: 连接失败时重试间隔（秒）
-        :return: None
-        """
-        self.set.interval(seconds)
-
     @property
     def timeout(self):
         """返回连接超时时间"""
@@ -129,14 +111,6 @@ class DownloadKit(object):
         else:
             return 20
 
-    @timeout.setter
-    def timeout(self, seconds):
-        """设置连接超时时间
-        :param seconds: 超时时间（秒）
-        :return: None
-        """
-        self.set.timeout(seconds)
-
     @property
     def waiting_list(self):
         """返回等待队列"""
@@ -145,57 +119,6 @@ class DownloadKit(object):
     @property
     def session(self):
         return self._session
-
-    @session.setter
-    def session(self, session):
-        """设置Session对象
-        :param session: Session对象或DrissionPage的页面对象
-        :return: None
-        """
-        self._is_BasePage = False
-        if isinstance(session, Session):
-            self._session = session
-            return
-
-        try:
-            from DrissionPage.base import BasePage
-            from DrissionPage import SessionOptions
-            if isinstance(session, BasePage):
-                self._session = session.session
-                self._page = session
-                self._is_BasePage = True
-                return
-            elif isinstance(session, SessionOptions):
-                self._session = session.make_session()
-                return
-        except ModuleNotFoundError:
-            pass
-
-        try:
-            from MixPage import MixPage, Drission, SessionPage as sp
-            if isinstance(session, (MixPage, sp)):
-                self._session = session.session
-                self._page = session
-                return
-            elif isinstance(session, Drission):
-                self._session = session.session
-                return
-        except ModuleNotFoundError:
-            pass
-
-        try:
-            from DrissionPage import MixPage, Drission
-            if isinstance(session, MixPage):
-                self._session = session.session
-                self._page = session
-                return
-            elif isinstance(session, Drission):
-                self._session = session.session
-                return
-        except (ModuleNotFoundError, ImportError):
-            pass
-
-        self._session = Session()
 
     @property
     def is_running(self):
@@ -682,11 +605,30 @@ class Setter(object):
         return LogSet(self)
 
     def driver(self, driver):
-        """设置用于下载的Session对象
-        :param driver: Session对象、DrissionPage页面对象或MixPage页面对象
+        """设置Session对象
+        :param driver: Session对象或DrissionPage的页面对象
         :return: None
         """
-        self._downloadKit.session = driver
+        self._is_BasePage = False
+        if isinstance(driver, Session):
+            self._downloadKit._session = driver
+            return
+
+        try:
+            from DrissionPage.base import BasePage
+            from DrissionPage import SessionOptions
+            if isinstance(driver, BasePage):
+                self._downloadKit._session = driver.session
+                self._downloadKit._page = driver
+                self._downloadKit._is_BasePage = True
+                return
+            elif isinstance(driver, SessionOptions):
+                self._downloadKit._session = driver.make_session()
+                return
+        except ModuleNotFoundError:
+            pass
+
+        self._downloadKit._session = Session()
 
     def roads(self, num):
         """设置可同时运行的线程数

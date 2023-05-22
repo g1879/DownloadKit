@@ -117,7 +117,7 @@ class Mission(BaseTask):
             self.file_name = path.name
 
         self._path = path
-        self.recorder.set_path(path)
+        self.recorder.set.path(path)
 
     @property
     def recorder(self):
