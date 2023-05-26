@@ -15,7 +15,8 @@ from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, \
+    set_session_cookies
 from .mission import Task, Mission, MissionData
 
 
@@ -43,7 +44,7 @@ class DownloadKit(object):
         self._retry = None
         self._interval = None
         self._timeout = None
-        self._is_BasePage = False
+        self._copy_cookies = False
 
         self._setter = None
         self._print_mode = None
@@ -317,7 +318,10 @@ class DownloadKit(object):
         """
         url = quote(url, safe='/:&?=%;#@+!')
         kwargs = CaseInsensitiveDict(kwargs)
-        session = copy_session(self._page.session) if self._is_BasePage else copy_session(self.session)
+        session = copy_session(self.session)
+        if self._copy_cookies and self._page:
+            set_session_cookies(session, self._page.get_cookies())
+            session.headers.update({"User-Agent": self._page.user_agent})
 
         if 'headers' not in kwargs:
             kwargs['headers'] = {}
@@ -609,18 +613,29 @@ class Setter(object):
         :param driver: Session对象或DrissionPage的页面对象
         :return: None
         """
-        self._is_BasePage = False
+        self._downloadKit._copy_cookies = False
         if isinstance(driver, Session):
             self._downloadKit._session = driver
             return
 
         try:
             from DrissionPage.base import BasePage
+            from DrissionPage import SessionPage, WebPage
+            from DrissionPage.chromium_tab import WebPageTab
             from DrissionPage import SessionOptions
-            if isinstance(driver, BasePage):
+            if isinstance(driver, (WebPageTab, WebPage)):
                 self._downloadKit._session = driver.session
                 self._downloadKit._page = driver
-                self._downloadKit._is_BasePage = True
+                self._downloadKit._copy_cookies = True
+                return
+            elif isinstance(driver, SessionPage):
+                self._downloadKit._session = driver.session
+                self._downloadKit._page = driver
+                return
+            elif isinstance(driver, BasePage):
+                self._downloadKit._session = Session()
+                self._downloadKit._page = driver
+                self._downloadKit._copy_cookies = True
                 return
             elif isinstance(driver, SessionOptions):
                 self._downloadKit._session = driver.make_session()
