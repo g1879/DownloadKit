@@ -6,7 +6,7 @@ with open("README.md", "r", encoding='utf-8') as fh:
 
 setup(
     name="DownloadKit",
-    version="0.6.0",
+    version="1.0.0",
     author="g1879",
     author_email="g1879@qq.com",
     description="一个简洁易用的多线程文件下载工具。",
@@ -19,7 +19,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "requests",
-        "DataRecorder"
+        "DataRecorder>=4.0.0"
     ],
     classifiers=[
         "Programming Language :: Python :: 3.6",

@@ -77,7 +77,7 @@ class FileExistsSetter(object):
 
 
 def get_usable_path(path):
-    """检查文件或文件夹是否有重名，并返回可以使用的路径           \n
+    """检查文件或文件夹是否有重名，并返回可以使用的路径
     :param path: 文件或文件夹路径
     :return: 可用的路径，Path对象
     """
@@ -105,7 +105,7 @@ def get_usable_path(path):
 
 
 def make_valid_name(full_name):
-    """获取有效的文件名                  \n
+    """获取有效的文件名
     :param full_name: 文件名
     :return: 可用的文件名
     """
@@ -131,7 +131,7 @@ def make_valid_name(full_name):
 
 
 def get_long(txt):
-    """返回字符串中字符个数（一个汉字是2个字符）          \n
+    """返回字符串中字符个数（一个汉字是2个字符）
     :param txt: 字符串
     :return: 字符个数
     """
@@ -163,7 +163,7 @@ def set_charset(response):
 
 
 def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=None):
-    """获取文件信息，大小单位为byte                   \n
+    """获取文件信息，大小单位为byte
     包括：size、path、skip
     :param response: Response对象
     :param goal_path: 目标文件夹

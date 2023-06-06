@@ -1,2 +1,2 @@
 requests
-DataRecorder
+DataRecorder>=4.0.0

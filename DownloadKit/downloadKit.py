@@ -4,20 +4,18 @@
 @Contact :   g1879@qq.com
 @File    :   downloadKit.py
 """
+from copy import copy
 from pathlib import Path
 from queue import Queue
 from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
-from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
 from requests import Session, Response
-from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, \
-    set_session_cookies
-from .mission import Task, Mission, MissionData
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, set_charset, get_file_info
+from .mission import Task, Mission
 
 
 class DownloadKit(object):
@@ -35,12 +33,12 @@ class DownloadKit(object):
         self._roads = roads
         self._missions = {}
         self._threads = {i: None for i in range(self._roads)}
-        self._waiting_list: Queue = Queue()
+        self._waiting_list = Queue()
         self._missions_num = 0
         self._running_count = 0  # 正在运行的任务数
         self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
-        self._page = None  # 如果接收页面对象则存放于此
+        self.page = None
         self._retry = None
         self._interval = None
         self._timeout = None
@@ -87,8 +85,8 @@ class DownloadKit(object):
         """返回连接失败时重试次数"""
         if self._retry is not None:
             return self._retry
-        elif self._page is not None:
-            return self._page.retry_times
+        elif self.page is not None:
+            return self.page.retry_times
         else:
             return 3
 
@@ -97,8 +95,8 @@ class DownloadKit(object):
         """返回连接失败时重试间隔"""
         if self._interval is not None:
             return self._interval
-        elif self._page is not None:
-            return self._page.retry_interval
+        elif self.page is not None:
+            return self.page.retry_interval
         else:
             return 5
 
@@ -107,8 +105,8 @@ class DownloadKit(object):
         """返回连接超时时间"""
         if self._timeout is not None:
             return self._timeout
-        elif self._page is not None:
-            return self._page.timeout
+        elif self.page is not None:
+            return self.page.timeout
         else:
             return 20
 
@@ -132,14 +130,6 @@ class DownloadKit(object):
     def missions(self):
         return self._missions
 
-    def set_proxies(self, http=None, https=None):
-        """设置代理地址及端口，例：'http://127.0.0.1:1080'
-        :param http: http代理地址及端口
-        :param https: https代理地址及端口
-        :return: None
-        """
-        self.set.proxies(http=http, https=https)
-
     def add(self, file_url, goal_path=None, rename=None, file_exists=None, split=None, **kwargs):
         """添加一个下载任务并将其返回
         :param file_url: 文件网址
@@ -150,23 +140,13 @@ class DownloadKit(object):
         :param kwargs: 连接参数
         :return: 任务对象
         """
-        post_data = kwargs.get('data', None)
-        post_json = kwargs.get('json', None)
-        if 'data' in kwargs:
-            kwargs = kwargs.pop('data')
-        if 'json' in kwargs:
-            kwargs = kwargs.pop('json')
-        data = MissionData(url=file_url,
-                           goal_path=str(goal_path or self.goal_path),
-                           rename=rename,
-                           file_exists=file_exists or self.file_exists,
-                           data=post_data,
-                           json=post_json,
-                           split=self.split if split is None else split,
-                           kwargs=kwargs)
         self._missions_num += 1
         self._running_count += 1
-        mission = Mission(self._missions_num, data, self)
+        mission = Mission(self._missions_num, self, file_url,
+                          str(goal_path or self.goal_path),
+                          rename, file_exists or self.file_exists,
+                          self.split if split is None else split,
+                          kwargs)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
         return mission
@@ -307,47 +287,21 @@ class DownloadKit(object):
 
         print()
 
-    def _connect(self, url, mode='get', data=None, json=None, **kwargs):
+    def _connect(self, url, session, method, **kwargs):
         """生成response对象
         :param url: 目标url
-        :param mode: 'get', 'post' 中选择
-        :param data: post方式要提交的数据
-        :param json: post方式要提交的数据
+        :param session: 用于连接的Session对象
+        :param method: 请求方式
         :param kwargs: 连接参数
         :return: tuple，第一位为Response或None，第二位为出错信息或'Success'
         """
-        url = quote(url, safe='/:&?=%;#@+!')
-        kwargs = CaseInsensitiveDict(kwargs)
-        session = copy_session(self.session)
-        if self._copy_cookies and self._page:
-            set_session_cookies(session, self._page.get_cookies())
-            session.headers.update({"User-Agent": self._page.user_agent})
-
-        if 'headers' not in kwargs:
-            kwargs['headers'] = {}
-        else:
-            kwargs['headers'] = CaseInsensitiveDict(kwargs['headers'])
-
-        # 设置referer、host和timeout值
-        parsed_url = urlparse(url)
-        hostname = parsed_url.hostname
-        scheme = parsed_url.scheme
-
-        if not ('Referer' in kwargs['headers'] or 'Referer' in self.session.headers):
-            kwargs['headers']['Referer'] = self._page.url if self._page is not None else f'{scheme}://{hostname}'
-        if 'Host' not in kwargs['headers']:
-            kwargs['headers']['Host'] = hostname
-        if not ('timeout' in kwargs['headers'] or 'timeout' in self.session.headers):
-            kwargs['timeout'] = self.timeout
-
-        # 执行连接
         r = err = None
         for i in range(self.retry + 1):
             try:
-                if mode == 'get':
+                if method == 'get':
                     r = session.get(url, **kwargs)
-                elif mode == 'post':
-                    r = session.post(url, data=data, json=json, **kwargs)
+                elif method == 'post':
+                    r = session.post(url, **kwargs)
 
                 if r:
                     return set_charset(r), 'Success'
@@ -391,8 +345,6 @@ class DownloadKit(object):
                     mission.data.url,
                     mission.data.goal_path,
                     mission.data.rename,
-                    mission.data.post_data,
-                    mission.data.post_json,
                     mission.data.kwargs)
             self._logger.add_data(data)
 
@@ -409,25 +361,17 @@ class DownloadKit(object):
             return
 
         file_url = mission_or_task.data.url
-        post_data = mission_or_task.data.post_data
-        post_json = mission_or_task.data.post_json
-        kwargs = mission_or_task.data.kwargs
 
         if isinstance(mission_or_task, Task):
+            kwargs = copy(mission_or_task.data.kwargs)
             task = mission_or_task
-            kwargs = CaseInsensitiveDict(kwargs)
-            if 'headers' not in kwargs:
-                kwargs['headers'] = {'Range': f"bytes={task.range[0]}-{task.range[1]}"}
-            else:
-                kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
-
-            mode = 'post' if post_data is not None or post_json is not None else 'get'
-            r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
+            kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
+            r, inf = self._connect(file_url, task.mission.session, task.mission.method, **kwargs)
 
             if r:
                 _do_download(r, task, False)
             else:
-                task.set_done(False, inf)
+                task._set_done(False, inf)
 
             return
 
@@ -435,6 +379,7 @@ class DownloadKit(object):
         mission = mission_or_task
         mission.info = '下载中'
         mission.state = 'running'
+        kwargs = mission_or_task.data.kwargs
         if self._print_mode == 'all':
             print(f'开始下载：{mission.data.url}')
         if self._log_mode == 'all':
@@ -454,30 +399,29 @@ class DownloadKit(object):
 
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
-            mission.path = goal_Path / rename
-            mission.set_done('skipped', str(mission.path))
+            mission._set_path(goal_Path / rename)
+            mission._set_done('skipped', str(mission.path))
             return
 
-        mode = 'post' if post_data is not None or post_json is not None else 'get'
-        r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
+        r, inf = self._connect(file_url, mission.session, mission.method, **kwargs)
 
         if mission.is_done:
             return
 
         if not r:
-            mission.break_mission(result=False, info=inf)
+            mission._break_mission(result=False, info=inf)
             return
 
         # -------------------获取文件信息-------------------
         file_info = get_file_info(r, goal_path, rename, file_exists, self._lock)
         file_size = file_info['size']
         full_path = file_info['path']
-        mission.path = full_path
+        mission._set_path(full_path)
         mission.file_name = full_path.name
         mission.size = file_size
 
         if file_info['skip']:
-            mission.set_done('skipped', str(mission.path))
+            mission._set_done('skipped', str(mission.path))
             return
 
         # -------------------设置分块任务-------------------
@@ -583,7 +527,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
     finally:
         r.close()
 
-    task.set_done(result=result, info=info)
+    task._set_done(result=result, info=info)
 
 
 class Setter(object):
@@ -625,16 +569,16 @@ class Setter(object):
             from DrissionPage import SessionOptions
             if isinstance(driver, (WebPageTab, WebPage)):
                 self._downloadKit._session = driver.session
-                self._downloadKit._page = driver
+                self._downloadKit.page = driver
                 self._downloadKit._copy_cookies = True
                 return
             elif isinstance(driver, SessionPage):
                 self._downloadKit._session = driver.session
-                self._downloadKit._page = driver
+                self._downloadKit.page = driver
                 return
             elif isinstance(driver, BasePage):
                 self._downloadKit._session = Session()
-                self._downloadKit._page = driver
+                self._downloadKit.page = driver
                 self._downloadKit._copy_cookies = True
                 return
             elif isinstance(driver, SessionOptions):
@@ -706,15 +650,11 @@ class Setter(object):
         self._downloadKit.block_size = size
 
     def proxies(self, http=None, https=None):
-        """设置代理地址及端口，例：'http://127.0.0.1:1080'
+        """设置代理地址及端口，例：'127.0.0.1:1080'
         :param http: http代理地址及端口
         :param https: https代理地址及端口
         :return: None
         """
-        if not http.startswith('http://'):
-            http = f'http://{http}'
-        if not https.startswith('http'):
-            https = f'http://{https}'
         self._downloadKit._session.proxies = {'http': http, 'https': https}
 
 
