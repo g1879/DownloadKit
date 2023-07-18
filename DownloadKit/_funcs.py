@@ -68,8 +68,8 @@ class PathSetter(object):
 class FileExistsSetter(object):
     def __set__(self, file_exists, mode):
         mode = mode.lower()
-        if mode not in ('skip', 'overwrite', 'rename'):
-            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
+        if mode not in ('skip', 'overwrite', 'rename', 'add'):
+            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename', 'add'")
         file_exists._file_exists = mode
 
     def __get__(self, file_exists, objtype=None):
@@ -143,6 +143,8 @@ def set_charset(response):
     """设置Response对象的编码"""
     # 在headers中获取编码
     content_type = response.headers.get('content-type', '').lower()
+    if not content_type.endswith(';'):
+        content_type += ';'
     charset = search(r'charset[=: ]*(.*)?;?', content_type)
 
     if charset:
@@ -208,7 +210,7 @@ def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=
             elif file_exists == 'skip':
                 skip = True
 
-            elif file_exists == 'overwrite':
+            elif file_exists in ('overwrite', 'add'):
                 full_path.unlink()
 
         if not skip:

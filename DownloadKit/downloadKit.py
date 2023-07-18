@@ -28,7 +28,7 @@ class DownloadKit(object):
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
         :param session: 使用的Session对象，或配置对象、页面对象等
-        :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'
+        :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'
         """
         self._roads = roads
         self._missions = {}
@@ -60,7 +60,7 @@ class DownloadKit(object):
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
-        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
         :param show_msg: 是否打印进度
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
@@ -135,7 +135,7 @@ class DownloadKit(object):
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
-        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
         :param split: 是否允许多线程分块下载，为None则使用对象属性
         :param kwargs: 连接参数
         :return: 任务对象
@@ -156,7 +156,7 @@ class DownloadKit(object):
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
-        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
         :param show_msg: 是否打印进度
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
@@ -716,11 +716,11 @@ class FileExists(object):
 
     def __call__(self, mode):
         """设置文件存在时的处理方式
-        :param mode: 'skip', 'rename', 'overwrite'
+        :param mode: 'skip', 'rename', 'overwrite', 'add'
         :return: None
         """
-        if mode not in ('skip', 'rename', 'overwrite'):
-            raise ValueError("mode参数只能是'skip', 'rename', 'overwrite'")
+        if mode not in ('skip', 'rename', 'overwrite', 'add'):
+            raise ValueError("mode参数只能是'skip', 'rename', 'overwrite', 'add'")
         self._setter.DownloadKit.file_exists = mode
 
     def skip(self):
@@ -734,3 +734,7 @@ class FileExists(object):
     def overwrite(self):
         """设为覆盖"""
         self._setter.DownloadKit.file_exists = 'overwrite'
+
+    def add(self):
+        """设为追加"""
+        self._setter.DownloadKit.file_exists = 'add'
