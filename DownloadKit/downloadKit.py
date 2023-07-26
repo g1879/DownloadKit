@@ -4,20 +4,19 @@
 @Contact :   g1879@qq.com
 @File    :   downloadKit.py
 """
+from copy import copy
 from pathlib import Path
 from queue import Queue
 from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
-from typing import Union
-from urllib.parse import quote, urlparse
 
 from DataRecorder import Recorder
 from requests import Session, Response
 from requests.structures import CaseInsensitiveDict
 
-from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, copy_session, set_charset, get_file_info, LogMode
-from .mission import Task, Mission, MissionData
+from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, set_charset, get_file_info
+from .mission import Task, Mission
 
 
 class DownloadKit(object):
@@ -30,140 +29,87 @@ class DownloadKit(object):
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
         :param session: 使用的Session对象，或配置对象、页面对象等
-        :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename'
+        :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'
         """
         self._roads = roads
         self._missions = {}
         self._threads = {i: None for i in range(self._roads)}
-        self._waiting_list: Queue = Queue()
+        self._waiting_list = Queue()
         self._missions_num = 0
         self._running_count = 0  # 正在运行的任务数
         self._stop_printing = False  # 用于控制显示线程停止
         self._lock = Lock()
-        self._page = None  # 如果接收页面对象则存放于此
+        self.page = None
         self._retry = None
         self._interval = None
         self._timeout = None
+        self._copy_cookies = False
 
+        self._setter = None
         self._print_mode = None
         self._log_mode = None
         self._logger = None
 
-        self.goal_path: str = goal_path or '.'
-        self.file_exists: str = file_exists
-        self.show_errmsg: bool = False
-        self.split: bool = True
-        self.block_size: Union[str, int] = '50M'  # 分块大小
-        self.session = session
+        self.goal_path = goal_path or '.'
+        self.file_exists = file_exists
+        self.split = True
+        self.block_size = '50M'
+        self.set.driver(session)
 
     def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
         """以阻塞的方式下载一个文件并返回结果
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
-        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
         :param show_msg: 是否打印进度
         :param kwargs: 连接参数
         :return: 任务结果和信息组成的tuple
         """
-        return self.add(file_url=file_url,
-                        goal_path=goal_path,
-                        rename=rename,
-                        file_exists=file_exists,
-                        split=False,
-                        **kwargs).wait(show=show_msg)
+        return self.download(file_url=file_url, goal_path=goal_path, rename=rename, file_exists=file_exists,
+                             show_msg=show_msg, **kwargs)
 
-    def set_print(self):
-        """设置打印到控制台的信息，可选全部、错误任务、不打印"""
-        if self._print_mode is None:
-            self._print_mode = LogMode()
-        return self._print_mode
-
-    def set_log(self, log_path=None):
-        """设置记录到文件的信息，可选全部、错误任务、不记录
-        :param log_path: 记录文件路径
-        :return: LogMode对象
-        """
-        if self._log_mode is None:
-            self._log_mode = LogMode()
-        if log_path is not None:
-            if self._logger is not None:
-                self._logger.set_path(log_path)
-            else:
-                self._logger = Recorder(log_path, 1)
-        return self._log_mode
+    @property
+    def set(self):
+        """用于设置打印和记录模式的对象"""
+        if self._setter is None:
+            self._setter = Setter(self)
+        return self._setter
 
     @property
     def roads(self):
         """可同时运行的线程数"""
         return self._roads
 
-    @roads.setter
-    def roads(self, val):
-        """设置可同时运行的线程数"""
-        if self.is_running:
-            print('有任务未完成时不能改变roads。')
-            return
-        if val != self._roads:
-            self._roads = val
-            self._threads = {i: None for i in range(self._roads)}
-
     @property
     def retry(self):
         """返回连接失败时重试次数"""
         if self._retry is not None:
             return self._retry
-        elif self._page is not None:
-            return self._page.retry_times
+        elif self.page is not None:
+            return self.page.retry_times
         else:
             return 3
-
-    @retry.setter
-    def retry(self, times):
-        """设置连接失败时重试次数"""
-        if not isinstance(times, int) or times < 0:
-            raise TypeError('times参数只能接受int格式且不能小于0。')
-        self._retry = times
 
     @property
     def interval(self):
         """返回连接失败时重试间隔"""
         if self._interval is not None:
             return self._interval
-        elif self._page is not None:
-            return self._page.retry_interval
+        elif self.page is not None:
+            return self.page.retry_interval
         else:
             return 5
-
-    @interval.setter
-    def interval(self, seconds):
-        """设置连接失败时重试间隔
-        :param seconds: 连接失败时重试间隔（秒）
-        :return: None
-        """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._interval = seconds
 
     @property
     def timeout(self):
         """返回连接超时时间"""
         if self._timeout is not None:
             return self._timeout
-        elif self._page is not None:
-            return self._page.timeout
+        elif self.page is not None:
+            return self.page.timeout
         else:
             return 20
-
-    @timeout.setter
-    def timeout(self, seconds):
-        """设置连接超时时间
-        :param seconds: 超时时间（秒）
-        :return: None
-        """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._timeout = seconds
 
     @property
     def waiting_list(self):
@@ -173,29 +119,6 @@ class DownloadKit(object):
     @property
     def session(self):
         return self._session
-
-    @session.setter
-    def session(self, session):
-        """设置Session对象
-        :param session: Session对象或DrissionPage的页面对象
-        :return: None
-        """
-        the_type = str(type(session))
-        if 'SessionPage' in the_type or 'WebPage' in the_type:
-            self._session = session.session
-            self._page = session
-        elif 'ChromiumPage' in the_type:
-            self._session = session.download_set.session
-            self._page = session
-        elif 'SessionOptions' in the_type:
-            self._session = session.make_session()
-        elif 'MixPage' in the_type:
-            self._session = session.session
-            self._page = session
-        elif 'Drission' in the_type:
-            self._session = session.session
-        else:
-            self._session = Session()
 
     @property
     def is_running(self):
@@ -208,48 +131,45 @@ class DownloadKit(object):
     def missions(self):
         return self._missions
 
-    def set_proxies(self, http=None, https=None):
-        """设置代理地址及端口，例：'http://127.0.0.1:1080'
-        :param http: http代理地址及端口
-        :param https: https代理地址及端口
-        :return: None
-        """
-        if not http.startswith('http://'):
-            http = f'http://{http}'
-        if not https.startswith('http'):
-            https = f'http://{https}'
-        self._session.proxies = {'http': http, 'https': https}
-
     def add(self, file_url, goal_path=None, rename=None, file_exists=None, split=None, **kwargs):
         """添加一个下载任务并将其返回
         :param file_url: 文件网址
         :param goal_path: 保存路径
         :param rename: 重命名的文件名
-        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename'，默认跟随实例属性
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
         :param split: 是否允许多线程分块下载，为None则使用对象属性
         :param kwargs: 连接参数
         :return: 任务对象
         """
-        post_data = kwargs.get('data', None)
-        post_json = kwargs.get('json', None)
-        if 'data' in kwargs:
-            kwargs = kwargs.pop('data')
-        if 'json' in kwargs:
-            kwargs = kwargs.pop('json')
-        data = MissionData(url=file_url,
-                           goal_path=str(goal_path or self.goal_path),
-                           rename=rename,
-                           file_exists=file_exists or self.file_exists,
-                           data=post_data,
-                           json=post_json,
-                           split=self.split if split is None else split,
-                           kwargs=kwargs)
         self._missions_num += 1
         self._running_count += 1
-        mission = Mission(self._missions_num, data, self)
+        mission = Mission(self._missions_num, self, file_url,
+                          str(goal_path or self.goal_path),
+                          rename, file_exists or self.file_exists,
+                          self.split if split is None else split,
+                          kwargs)
         self._missions[self._missions_num] = mission
         self._run_or_wait(mission)
         return mission
+
+    def download(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
+        """以阻塞的方式下载一个文件并返回结果
+        :param file_url: 文件网址
+        :param goal_path: 保存路径
+        :param rename: 重命名的文件名
+        :param file_exists: 遇到同名文件时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'，默认跟随实例属性
+        :param show_msg: 是否打印进度
+        :param kwargs: 连接参数
+        :return: 任务结果和信息组成的tuple
+        """
+        if show_msg:
+            tmp = self._print_mode
+            self._print_mode = None
+        r = self.add(file_url=file_url, goal_path=goal_path, rename=rename, file_exists=file_exists,
+                     split=False, **kwargs).wait(show=show_msg)
+        if show_msg:
+            self._print_mode = tmp
+        return r
 
     def _run_or_wait(self, mission):
         """接收任务，有空线程则运行，没有则进入等待队列
@@ -368,44 +288,26 @@ class DownloadKit(object):
 
         print()
 
-    def _connect(self, url, mode='get', data=None, json=None, **kwargs):
+    def _connect(self, url, session, method, **kwargs):
         """生成response对象
         :param url: 目标url
-        :param mode: 'get', 'post' 中选择
-        :param data: post方式要提交的数据
-        :param json: post方式要提交的数据
+        :param session: 用于连接的Session对象
+        :param method: 请求方式
         :param kwargs: 连接参数
         :return: tuple，第一位为Response或None，第二位为出错信息或'Success'
         """
-        url = quote(url, safe='/:&?=%;#@+!')
-        kwargs = CaseInsensitiveDict(kwargs)
-        session = copy_session(self.session)
-
-        if 'headers' not in kwargs:
-            kwargs['headers'] = {}
-        else:
+        if 'headers' in kwargs:  # 不知道为什么添加这个才能正常使用多线程
             kwargs['headers'] = CaseInsensitiveDict(kwargs['headers'])
+        else:
+            kwargs['headers'] = CaseInsensitiveDict()
 
-        # 设置referer、host和timeout值
-        parsed_url = urlparse(url)
-        hostname = parsed_url.hostname
-        scheme = parsed_url.scheme
-
-        if not ('Referer' in kwargs['headers'] or 'Referer' in self.session.headers):
-            kwargs['headers']['Referer'] = self._page.url if self._page is not None else f'{scheme}://{hostname}'
-        if 'Host' not in kwargs['headers']:
-            kwargs['headers']['Host'] = hostname
-        if not ('timeout' in kwargs['headers'] or 'timeout' in self.session.headers):
-            kwargs['timeout'] = self.timeout
-
-        # 执行连接
         r = err = None
         for i in range(self.retry + 1):
             try:
-                if mode == 'get':
+                if method == 'get':
                     r = session.get(url, **kwargs)
-                elif mode == 'post':
-                    r = session.post(url, data=data, json=json, **kwargs)
+                elif method == 'post':
+                    r = session.post(url, **kwargs)
 
                 if r:
                     return set_charset(r), 'Success'
@@ -441,16 +343,15 @@ class DownloadKit(object):
         :return: None
         """
         self._running_count -= 1
-        if self.set_print().log_mode == 'all' or (self.set_print().log_mode == 'fail' and mission.result is False):
-            print(f'{mission.data.url}\n{mission.result}\n{mission.info}\n')
+        if self._print_mode == 'all' or (self._print_mode == 'failed' and mission.result is False):
+            print(f'[{mission.RESULT_TEXTS[mission.result]}] {mission.data.url} {mission.info}')
 
-        if self.set_log().log_mode == 'all' or (self.set_log().log_mode == 'fail' and mission.result is False):
-            data = {'url': mission.data.url,
-                    'path': mission.data.goal_path,
-                    'rename': mission.data.rename,
-                    'post_data': mission.data.post_data,
-                    'post_json': mission.data.post_json,
-                    'kwargs': mission.data.kwargs}
+        if self._log_mode == 'all' or (self._log_mode == 'failed' and mission.result is False):
+            data = ('下载结果',
+                    mission.data.url,
+                    mission.data.goal_path,
+                    mission.data.rename,
+                    mission.data.kwargs)
             self._logger.add_data(data)
 
     def _download(self, mission_or_task, thread_id):
@@ -466,25 +367,17 @@ class DownloadKit(object):
             return
 
         file_url = mission_or_task.data.url
-        post_data = mission_or_task.data.post_data
-        post_json = mission_or_task.data.post_json
-        kwargs = mission_or_task.data.kwargs
 
         if isinstance(mission_or_task, Task):
+            kwargs = copy(mission_or_task.data.kwargs)
             task = mission_or_task
-            kwargs = CaseInsensitiveDict(kwargs)
-            if 'headers' not in kwargs:
-                kwargs['headers'] = {'Range': f"bytes={task.range[0]}-{task.range[1]}"}
-            else:
-                kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
-
-            mode = 'post' if post_data is not None or post_json is not None else 'get'
-            r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
+            kwargs['headers']['Range'] = f"bytes={task.range[0]}-{task.range[1]}"
+            r, inf = self._connect(file_url, task.mission.session, task.mission.method, **kwargs)
 
             if r:
                 _do_download(r, task, False)
             else:
-                task.set_done(False, inf)
+                task._set_done(False, inf)
 
             return
 
@@ -492,6 +385,11 @@ class DownloadKit(object):
         mission = mission_or_task
         mission.info = '下载中'
         mission.state = 'running'
+        kwargs = mission_or_task.data.kwargs
+        if self._print_mode == 'all':
+            print(f'开始下载：{mission.data.url}')
+        if self._log_mode == 'all':
+            self._logger.add_data(('开始下载', mission.data.url))
 
         rename = mission.data.rename
         goal_path = mission.data.goal_path
@@ -507,37 +405,40 @@ class DownloadKit(object):
 
         if file_exists == 'skip' and rename and (goal_Path / rename).exists():
             mission.file_name = rename
-            mission.path = goal_Path / rename
-            mission.set_done('skip', str(mission.path))
+            mission._set_path(goal_Path / rename)
+            mission._set_done('skipped', str(mission.path))
             return
 
-        mode = 'post' if post_data is not None or post_json is not None else 'get'
-        r, inf = self._connect(file_url, mode=mode, data=post_data, json=post_json, **kwargs)
+        r, inf = self._connect(file_url, mission.session, mission.method, **kwargs)
 
         if mission.is_done:
             return
 
         if not r:
-            mission.break_mission(result=False, info=inf)
+            mission._break_mission(result=False, info=inf)
             return
 
         # -------------------获取文件信息-------------------
         file_info = get_file_info(r, goal_path, rename, file_exists, self._lock)
         file_size = file_info['size']
         full_path = file_info['path']
-        mission.path = full_path
+        mission._set_path(full_path)
         mission.file_name = full_path.name
         mission.size = file_size
 
         if file_info['skip']:
-            mission.set_done('skip', str(mission.path))
+            mission._set_done('skipped', str(mission.path))
             return
+
+        full_Path = Path(full_path)
+        if file_exists == 'add' and full_Path.exists():
+            mission.data.offset = full_Path.stat().st_size
 
         # -------------------设置分块任务-------------------
         first = False
         if split and file_size and file_size > self.block_size and r.headers.get('Accept-Ranges') == 'bytes':
             first = True
-            chunks = [[s, min(s + self.block_size, file_size)] for s in range(0, file_size, self.block_size)]
+            chunks = [[s, min(s + self.block_size, file_size) - 1] for s in range(0, file_size, self.block_size)]
             chunks[-1][-1] = ''
             chunks_len = len(chunks)
 
@@ -570,19 +471,41 @@ def _do_download(r: Response, task: Task, first: bool = False):
         return
 
     task.set_states(result=None, info='下载中', state='running')
-    block_size = 65536  # 64k
+    block_size = 2  # 64k
     result = None
 
     try:
-        if first:  # 分块时第一块
-            r_content = r.iter_content(chunk_size=task.range[1])
-            task.add_data(next(r_content), 0)
+        if first:  # 分块是第一块
+            if task.range[1] <= block_size or task.range[1] % block_size != 0:
+                r_content = r.iter_content(chunk_size=task.range[1] + 1)
+                task.add_data(next(r_content), seek=0 + task.mission.data.offset)
+                if task.state in ('cancel', 'done'):
+                    result = 'canceled'
+                    task.clear_cache()
+
+            else:
+                blocks = task.range[1] // block_size
+                remainder = task.range[1] % block_size
+                r_content = r.iter_content(chunk_size=block_size)
+                for b in range(blocks):
+                    task.add_data(next(r_content), seek=b * block_size + task.mission.data.offset)
+                    if task.state in ('cancel', 'done'):
+                        result = 'canceled'
+                        task.clear_cache()
+                        break
+
+                if task.state in ('cancel', 'done'):
+                    result = 'canceled'
+                    task.clear_cache()
+                else:
+                    task.add_data(next(r_content)[:remainder + 1], blocks * block_size + task.mission.data.offset)
 
         else:
             if task.range is None:  # 不分块
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
                         task.add_data(chunk, None)
@@ -591,10 +514,11 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 begin = task.range[0]
                 for chunk in r.iter_content(chunk_size=block_size):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
-                        task.add_data(chunk, seek=begin)
+                        task.add_data(chunk, seek=begin + task.mission.data.offset)
                         begin += len(chunk)
 
             else:  # 有始末数字的数据块
@@ -602,10 +526,11 @@ def _do_download(r: Response, task: Task, first: bool = False):
                 num = (end - begin) // block_size
                 for ind, chunk in enumerate(r.iter_content(chunk_size=block_size), 1):
                     if task.state in ('cancel', 'done'):
-                        result = 'cancel'
+                        result = 'canceled'
+                        task.clear_cache()
                         break
                     if chunk:
-                        task.add_data(chunk, seek=begin)
+                        task.add_data(chunk, seek=begin + task.mission.data.offset)
                         if ind <= num:
                             begin += block_size
 
@@ -619,4 +544,214 @@ def _do_download(r: Response, task: Task, first: bool = False):
     finally:
         r.close()
 
-    task.set_done(result=result, info=info)
+    task._set_done(result=result, info=info)
+
+
+class Setter(object):
+    def __init__(self, downloadKit):
+        """
+        :param downloadKit: downloadKit对象
+        """
+        self._downloadKit: DownloadKit = downloadKit
+
+    @property
+    def DownloadKit(self):
+        """返回使用的DownloadKit对象"""
+        return self._downloadKit
+
+    @property
+    def if_file_exists(self):
+        """返回用于设置文件同名策略的对象"""
+        return FileExists(self)
+
+    @property
+    def log_mode(self):
+        """返回用于设置记录模式的对象"""
+        return LogSet(self)
+
+    def driver(self, driver):
+        """设置Session对象
+        :param driver: Session对象或DrissionPage的页面对象
+        :return: None
+        """
+        self._downloadKit._copy_cookies = False
+        if isinstance(driver, Session):
+            self._downloadKit._session = driver
+            return
+
+        try:
+            from DrissionPage.base import BasePage
+            from DrissionPage import SessionPage, WebPage
+            from DrissionPage.chromium_tab import WebPageTab
+            from DrissionPage import SessionOptions
+            if isinstance(driver, (WebPageTab, WebPage)):
+                self._downloadKit._session = driver.session
+                self._downloadKit.page = driver
+                self._downloadKit._copy_cookies = True
+                return
+            elif isinstance(driver, SessionPage):
+                self._downloadKit._session = driver.session
+                self._downloadKit.page = driver
+                return
+            elif isinstance(driver, BasePage):
+                self._downloadKit._session = Session()
+                self._downloadKit.page = driver
+                self._downloadKit._copy_cookies = True
+                return
+            elif isinstance(driver, SessionOptions):
+                self._downloadKit._session = driver.make_session()
+                return
+        except ModuleNotFoundError:
+            pass
+
+        self._downloadKit._session = Session()
+
+    def roads(self, num):
+        """设置可同时运行的线程数
+        :param num: 线程数量
+        :return: None
+        """
+        if self._downloadKit.is_running:
+            print('有任务未完成时不能改变roads。')
+            return
+        if num != self._downloadKit.roads:
+            self._downloadKit._roads = num
+            self._downloadKit._threads = {i: None for i in range(num)}
+
+    def retry(self, times):
+        """设置连接失败时重试次数
+        :param times: 重试次数
+        :return: None
+        """
+        if not isinstance(times, int) or times < 0:
+            raise TypeError('times参数只能接受int格式且不能小于0。')
+        self._downloadKit._retry = times
+
+    def interval(self, seconds):
+        """设置连接失败时重试间隔
+        :param seconds: 连接失败时重试间隔（秒）
+        :return: None
+        """
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
+        self._downloadKit._interval = seconds
+
+    def timeout(self, seconds):
+        """设置连接超时时间
+        :param seconds: 超时时间（秒）
+        :return: None
+        """
+        if not isinstance(seconds, (int, float)) or seconds < 0:
+            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
+        self._downloadKit._timeout = seconds
+
+    def goal_path(self, path):
+        """设置文件保存路径
+        :param path: 文件路径，可以是str或Path
+        :return: None
+        """
+        self._downloadKit.goal_path = path
+
+    def split(self, on_off):
+        """设置大文件是否分块下载
+        :param on_off: bool代表开关
+        :return: None
+        """
+        self._downloadKit.split = on_off
+
+    def block_size(self, size):
+        """设置分块大小
+        :param size: 单位为字节，可用'K'、'M'、'G'为单位，如'50M'
+        :return: None
+        """
+        self._downloadKit.block_size = size
+
+    def proxies(self, http=None, https=None):
+        """设置代理地址及端口，例：'127.0.0.1:1080'
+        :param http: http代理地址及端口
+        :param https: https代理地址及端口
+        :return: None
+        """
+        self._downloadKit._session.proxies = {'http': http, 'https': https}
+
+
+class LogSet(object):
+    """用于设置信息打印和记录日志方式"""
+
+    def __init__(self, setter):
+        """
+        :param setter: Setter对象
+        """
+        self._setter = setter
+
+    def log_path(self, log_path):
+        """设置日志文件路径
+        :param log_path: 文件路径，可以是str或Path
+        :return: None
+        """
+        if self._setter.DownloadKit._logger is not None:
+            self._setter.DownloadKit._logger.record()
+        self._setter.DownloadKit._logger = Recorder(log_path)
+
+    def print_all(self):
+        """打印所有信息"""
+        self._setter.DownloadKit._print_mode = 'all'
+
+    def print_failed(self):
+        """只有在下载失败时打印信息"""
+        self._setter.DownloadKit._print_mode = 'failed'
+
+    def print_nothing(self):
+        """不打印任何信息"""
+        self._setter.DownloadKit._print_mode = None
+
+    def log_all(self):
+        """记录所有信息"""
+        if self._setter.DownloadKit._logger is None:
+            raise RuntimeError('请先用log_path()设置log文件路径。')
+        self._setter.DownloadKit._log_mode = 'all'
+
+    def log_failed(self):
+        """只记录下载失败的信息"""
+        if self._setter.DownloadKit._logger is None:
+            raise RuntimeError('请先用log_path()设置log文件路径。')
+        self._setter.DownloadKit._log_mode = 'failed'
+
+    def log_nothing(self):
+        """不进行记录"""
+        self._setter.DownloadKit._log_mode = None
+
+
+class FileExists(object):
+    """用于设置存在同名文件时处理方法"""
+
+    def __init__(self, setter):
+        """
+        :param setter: Setter对象
+        """
+        self._setter = setter
+
+    def __call__(self, mode):
+        """设置文件存在时的处理方式
+        :param mode: 'skip', 'rename', 'overwrite', 'add'
+        :return: None
+        """
+        if mode not in ('skip', 'rename', 'overwrite', 'add'):
+            raise ValueError("mode参数只能是'skip', 'rename', 'overwrite', 'add'")
+        self._setter.DownloadKit.file_exists = mode
+
+    def skip(self):
+        """设为跳过"""
+        self._setter.DownloadKit.file_exists = 'skip'
+
+    def rename(self):
+        """设为重命名，文件名后加序号"""
+        self._setter.DownloadKit.file_exists = 'rename'
+
+    def overwrite(self):
+        """设为覆盖"""
+        self._setter.DownloadKit.file_exists = 'overwrite'
+
+    def add(self):
+        """设为追加"""
+        self._setter.DownloadKit.file_exists = 'add'

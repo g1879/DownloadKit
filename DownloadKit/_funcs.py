@@ -68,35 +68,16 @@ class PathSetter(object):
 class FileExistsSetter(object):
     def __set__(self, file_exists, mode):
         mode = mode.lower()
-        if mode not in ('skip', 'overwrite', 'rename'):
-            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename'")
+        if mode not in ('skip', 'overwrite', 'rename', 'add'):
+            raise ValueError("file_exists参数只能传入'skip', 'overwrite', 'rename', 'add'")
         file_exists._file_exists = mode
 
     def __get__(self, file_exists, objtype=None):
         return file_exists._file_exists
 
 
-class LogMode(object):
-    """设置记录或打印哪些任务信息"""
-
-    def __init__(self):
-        self.log_mode = None
-
-    def all(self):
-        """全部"""
-        self.log_mode = 'all'
-
-    def none(self):
-        """不记录或打印"""
-        self.log_mode = None
-
-    def fail(self):
-        """只记录或打印失败任务"""
-        self.log_mode = 'fail'
-
-
 def get_usable_path(path):
-    """检查文件或文件夹是否有重名，并返回可以使用的路径           \n
+    """检查文件或文件夹是否有重名，并返回可以使用的路径
     :param path: 文件或文件夹路径
     :return: 可用的路径，Path对象
     """
@@ -124,7 +105,7 @@ def get_usable_path(path):
 
 
 def make_valid_name(full_name):
-    """获取有效的文件名                  \n
+    """获取有效的文件名
     :param full_name: 文件名
     :return: 可用的文件名
     """
@@ -150,7 +131,7 @@ def make_valid_name(full_name):
 
 
 def get_long(txt):
-    """返回字符串中字符个数（一个汉字是2个字符）          \n
+    """返回字符串中字符个数（一个汉字是2个字符）
     :param txt: 字符串
     :return: 字符个数
     """
@@ -162,6 +143,8 @@ def set_charset(response):
     """设置Response对象的编码"""
     # 在headers中获取编码
     content_type = response.headers.get('content-type', '').lower()
+    if not content_type.endswith(';'):
+        content_type += ';'
     charset = search(r'charset[=: ]*(.*)?;?', content_type)
 
     if charset:
@@ -182,7 +165,7 @@ def set_charset(response):
 
 
 def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=None):
-    """获取文件信息，大小单位为byte                   \n
+    """获取文件信息，大小单位为byte
     包括：size、path、skip
     :param response: Response对象
     :param goal_path: 目标文件夹
@@ -209,10 +192,7 @@ def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=
     # -------------------重命名，不改变扩展名-------------------
     if rename:
         ext_name = file_name.split('.')[-1]
-        if '.' in rename or ext_name == file_name:  # 新文件名带后缀或原文件名没有后缀
-            full_name = rename
-        else:
-            full_name = f'{rename}.{ext_name}'
+        full_name = rename if ext_name == file_name else f'{rename}.{ext_name}'
     else:
         full_name = file_name
 
@@ -220,6 +200,7 @@ def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=
 
     # -------------------生成路径-------------------
     skip = False
+    create = True
     full_path = goal_Path / full_name
 
     with lock:
@@ -229,11 +210,15 @@ def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=
 
             elif file_exists == 'skip':
                 skip = True
+                create = False
 
             elif file_exists == 'overwrite':
                 full_path.unlink()
 
-        if not skip:
+            elif file_exists == 'add':
+                create = False
+
+        if create:
             with open(full_path, 'wb'):
                 pass
 
@@ -282,3 +267,24 @@ def _get_file_name(response) -> str:
     # 去除非法字符
     charset = charset or 'utf-8'
     return unquote(file_name, charset)
+
+
+def set_session_cookies(session, cookies):
+    """设置Session对象的cookies
+    :param session: Session对象
+    :param cookies: cookies信息
+    :return: None
+    """
+    # cookies = cookies_to_tuple(cookies)
+    for cookie in cookies:
+        if cookie['value'] is None:
+            cookie['value'] = ''
+
+        kwargs = {x: cookie[x] for x in cookie
+                  if x.lower() in ('version', 'port', 'domain', 'path', 'secure',
+                                   'expires', 'discard', 'comment', 'comment_url', 'rest')}
+
+        if 'expiry' in cookie:
+            kwargs['expires'] = cookie['expiry']
+
+        session.cookies.set(cookie['name'], cookie['value'], **kwargs)
