@@ -6,7 +6,7 @@
 from pathlib import Path
 from queue import Queue
 from threading import Lock
-from typing import Union, Tuple, Any
+from typing import Union, Tuple, Any, Literal, Optional
 
 from DataRecorder import Recorder
 from DrissionPage import SessionOptions
@@ -15,6 +15,8 @@ from requests import Session, Response
 
 from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter
 from .mission import Task, Mission, BaseTask
+
+FILE_EXISTS = Literal['add', 'skip', 'rename', 'overwrite']
 
 
 class DownloadKit(object):
@@ -26,7 +28,7 @@ class DownloadKit(object):
                  goal_path: Union[str, Path] = None,
                  roads: int = 10,
                  session: Union[Session, BasePage] = None,
-                 file_exists: str = 'rename'):
+                 file_exists: FILE_EXISTS = 'rename'):
         self._roads: int = ...
         self._setter: Setter = ...
         self._print_mode: str = ...
@@ -34,7 +36,7 @@ class DownloadKit(object):
         self._logger: Recorder = ...
         self._retry: int = ...
         self._interval: float = ...
-        self.page: Union[BasePage, None] = ...
+        self.page: Optional[BasePage] = ...
         self._waiting_list: Queue = ...
         self._session: Session = ...
         self._running_count: int = ...
@@ -47,25 +49,26 @@ class DownloadKit(object):
         self._copy_cookies: bool = ...
 
         self.goal_path: str = ...
-        self.file_exists: str = ...
+        self.file_exists: FILE_EXISTS = ...
         self.split: bool = ...
         self.block_size: Union[str, int] = ...
 
     def __call__(self,
                  file_url: str,
-                 goal_path: Union[str, Path] = None,
+                 goal_path: Optional[str, Path] = None,
                  rename: str = None,
-                 file_exists: str = None,
+                 file_exists: FILE_EXISTS = None,
                  show_msg: bool = True,
-                 timeout: Union[float | None] = None,
-                 params: Union[dict | None] = ...,
-                 json: Union[dict, str, None] = ...,
-                 headers: Union[dict | None] = ...,
+                 timeout: Optional[float] = None,
+                 params: Optional[dict] = ...,
+                 data: Any = ...,
+                 json: Any = ...,
+                 headers: Optional[dict] = ...,
                  cookies: Any = ...,
                  files: Any = ...,
                  auth: Any = ...,
                  allow_redirects: bool = ...,
-                 proxies: Union[dict | None] = ...,
+                 proxies: Optional[dict] = ...,
                  hooks: Any = ...,
                  stream: Any = ...,
                  verify: Any = ...,
@@ -100,20 +103,20 @@ class DownloadKit(object):
 
     def add(self,
             file_url: str,
-            goal_path: Union[str, Path] = None,
+            goal_path: Optional[str, Path] = None,
             rename: str = None,
-            file_exists: str = None,
-            data: Union[str, dict] = None,
+            file_exists: FILE_EXISTS = None,
             split: bool = None,
-            timeout: Union[float | None] = None,
-            params: Union[dict | None] = ...,
-            json: Union[dict, str, None] = ...,
-            headers: Union[dict | None] = ...,
+            timeout: Optional[float] = None,
+            params: Optional[dict] = ...,
+            data: Any = None,
+            json: Optional[dict, str] = ...,
+            headers: Optional[dict] = ...,
             cookies: Any = ...,
             files: Any = ...,
             auth: Any = ...,
             allow_redirects: bool = ...,
-            proxies: Union[dict | None] = ...,
+            proxies: Optional[dict] = ...,
             hooks: Any = ...,
             stream: Any = ...,
             verify: Any = ...,
@@ -121,25 +124,26 @@ class DownloadKit(object):
 
     def download(self,
                  file_url: str,
-                 goal_path: Union[str, Path] = None,
+                 goal_path: Optional[str, Path] = None,
                  rename: str = None,
-                 file_exists: str = None,
+                 file_exists: FILE_EXISTS = None,
                  show_msg: bool = True,
-                 timeout: Union[float | None] = None,
-                 params: Union[dict | None] = ...,
-                 json: Union[dict, str, None] = ...,
-                 headers: Union[dict | None] = ...,
+                 timeout: Optional[float] = None,
+                 params: Optional[dict] = ...,
+                 data: Any = ...,
+                 json: Any = ...,
+                 headers: Optional[dict] = ...,
                  cookies: Any = ...,
                  files: Any = ...,
                  auth: Any = ...,
                  allow_redirects: bool = ...,
-                 proxies: Union[dict | None] = ...,
+                 proxies: Optional[dict] = ...,
                  hooks: Any = ...,
                  stream: Any = ...,
                  verify: Any = ...,
                  cert: Any = ...) -> tuple: ...
 
-    def _run_or_wait(self, mission: BaseTask): ...
+    def _run_or_wait(self, mission: BaseTask) -> None: ...
 
     def _run(self, ID: int, mission: BaseTask) -> None: ...
 
@@ -150,9 +154,9 @@ class DownloadKit(object):
     def wait(self,
              mission: Union[int, Mission] = None,
              show: bool = False,
-             timeout: float = None) -> Union[tuple, None]: ...
+             timeout: float = None) -> Optional[tuple]: ...
 
-    def cancel(self): ...
+    def cancel(self) -> None: ...
 
     def show(self, asyn: bool = True, keep: bool = False) -> None: ...
 
@@ -160,7 +164,7 @@ class DownloadKit(object):
 
     def _connect(self, url: str, session: Session, method: str, **kwargs) -> Tuple[Union[Response, None], str]: ...
 
-    def _get_usable_thread(self) -> Union[int, None]: ...
+    def _get_usable_thread(self) -> Optional[int]: ...
 
     def _stop_show(self) -> None: ...
 
@@ -226,7 +230,7 @@ class FileExists(object):
     def __init__(self, setter: Setter):
         self._setter: Setter = ...
 
-    def __call__(self, mode: str): ...
+    def __call__(self, mode: FILE_EXISTS): ...
 
     def skip(self) -> None: ...
 

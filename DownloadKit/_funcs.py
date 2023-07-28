@@ -191,8 +191,11 @@ def get_file_info(response, goal_path=None, rename=None, file_exists=None, lock=
     # ------------获取保存文件名------------
     # -------------------重命名，不改变扩展名-------------------
     if rename:
-        ext_name = file_name.split('.')[-1]
-        full_name = rename if ext_name == file_name else f'{rename}.{ext_name}'
+        tmp = file_name.rsplit('.', 1)
+        ext_name = tmp[-1] if len(tmp) > 1 else ''
+        tmp = rename.rsplit('.', 1)
+        ext_rename = tmp[-1] if len(tmp) > 1 else ''
+        full_name = rename if ext_rename == ext_name else f'{rename}.{ext_name}'
     else:
         full_name = file_name
 
