@@ -19,7 +19,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "requests",
-        "DataRecorder>=4.0.0"
+        "DataRecorder>=3.4.2"
     ],
     classifiers=[
         "Programming Language :: Python :: 3.6",
