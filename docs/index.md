@@ -1,9 +1,14 @@
+---
+hide:
+  - navigation
+---
+
 ## 简介
 
 DownloadKit 是一个基于 python 的简洁易用的多线程文件下载工具。
 使用简单，功能强大。
 
-使用文档：[点击查看](http://g1879.gitee.io/downloadkit/)
+当前版本：v1.0.1
 
 ---
 
