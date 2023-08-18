@@ -442,18 +442,18 @@ class DownloadKit(object):
             chunks[-1][-1] = ''
             chunks_len = len(chunks)
 
-            task1 = Task(mission, chunks[0], f'1/{chunks_len}')
+            task1 = Task(mission, chunks[0], f'1/{chunks_len}', chunks[0][1] - chunks[0][0])
             mission.tasks_count = chunks_len
-            mission.tasks = []
-            mission.tasks.append(task1)
+            mission.tasks = [task1]
 
             for ind, chunk in enumerate(chunks[1:], 2):
-                task = Task(mission, chunk, f'{ind}/{chunks_len}')
+                s = file_size - chunk[0] if chunks_len == ind else chunk[1] - chunk[0]
+                task = Task(mission, chunk, f'{ind}/{chunks_len}', s)
                 mission.tasks.append(task)
                 self._run_or_wait(task)
 
         else:  # 不分块
-            task1 = Task(mission, None, '1/1')
+            task1 = Task(mission, None, '1/1', file_size)
             mission.tasks.append(task1)
 
         self._threads[thread_id]['mission'] = task1
@@ -471,7 +471,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
         return
 
     task.set_states(result=None, info='下载中', state='running')
-    block_size = 2  # 64k
+    block_size = 131072  # 128k
     result = None
 
     try:
@@ -565,7 +565,7 @@ class Setter(object):
         return FileExists(self)
 
     @property
-    def log_mode(self):
+    def log(self):
         """返回用于设置记录模式的对象"""
         return LogSet(self)
 
@@ -684,14 +684,14 @@ class LogSet(object):
         """
         self._setter = setter
 
-    def log_path(self, log_path):
+    def path(self, path):
         """设置日志文件路径
-        :param log_path: 文件路径，可以是str或Path
+        :param path: 文件路径，可以是str或Path
         :return: None
         """
         if self._setter.DownloadKit._logger is not None:
             self._setter.DownloadKit._logger.record()
-        self._setter.DownloadKit._logger = Recorder(log_path)
+        self._setter.DownloadKit._logger = Recorder(path)
 
     def print_all(self):
         """打印所有信息"""
