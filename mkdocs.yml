@@ -1,8 +1,8 @@
-site_name: DataRecorder
-site_url: http://g1879.gitee.io/downloadkit/
+site_name: DownloadKit
+site_url: http://g1879.gitee.io/DownloadKit/
 site_author: g1879
 site_description: DownloadKit是一个简洁易用的多线程文件下载工具，支持多线程，功能丰富使用简单。
-repo_url: https://gitee.com/g1879/downloadkit
+repo_url: https://gitee.com/g1879/DownloadKit
 markdown_extensions:
   - admonition  # 提示块
 
@@ -41,14 +41,14 @@ theme:
 
   palette:
     - scheme: default
-      primary: teal
+      primary: brown
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
 
       # Palette toggle for dark mode
     - scheme: slate
-      primary: teal
+      primary: brown
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -66,13 +66,14 @@ theme:
 nav:
   - 欢迎: index.md
 
-  - 安装和导入: installation_and_import.md
+  - 安装和导入: install_and_import.md
 
   - 使用方法:
-      - 💬 创建对象: create_object.md
-      - 🐷 添加任务: add_missions.md
-      - 🐨 任务管理: misssions.md
-      - 🐼 运行设置: settings.md
+      - 🐘 创建对象: usage/create_object.md
+      - 🐎 添加任务: usage/add_missions.md
+      - 🐒 任务管理: usage/misssions.md
+      - 🦍 运行设置: usage/settings.md
+      - 🐇 APIs: usage/APIs.md
 
   - 版本历史: history.md
 

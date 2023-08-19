@@ -128,6 +128,8 @@ class Mission(BaseTask):
     @property
     def rate(self):
         """返回下载进度百分比"""
+        if not self.size:
+            return None
         c = 0
         for t in self.tasks:
             c += t._downloaded_size if t._downloaded_size else 0

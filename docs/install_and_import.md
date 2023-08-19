@@ -1,4 +1,8 @@
-## 安装
+---
+hide:
+  - navigation
+---
+## 🎟️ 安装
 
 如果您安装过 DrissionPage，本库已自动安装。
 
@@ -8,7 +12,7 @@ pip install DownloadKit
 
 ---
 
-## 导入
+## 🎫 导入
 
 ```python
 from DownloadKit import DownloadKit
