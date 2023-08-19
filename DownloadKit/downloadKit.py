@@ -11,12 +11,12 @@ from re import sub
 from threading import Thread, Lock
 from time import sleep, perf_counter
 
-from DataRecorder import Recorder
-from requests import Session, Response
+from requests import Response
 from requests.structures import CaseInsensitiveDict
 
 from ._funcs import FileExistsSetter, PathSetter, BlockSizeSetter, set_charset, get_file_info
 from .mission import Task, Mission
+from .setter import Setter
 
 
 class DownloadKit(object):
@@ -24,12 +24,12 @@ class DownloadKit(object):
     goal_path = PathSetter()
     block_size = BlockSizeSetter()
 
-    def __init__(self, goal_path=None, roads=10, session=None, file_exists='rename'):
+    def __init__(self, goal_path=None, roads=10, session=None, file_exists='rename', driver=None):
         """
         :param goal_path: 文件保存路径
         :param roads: 可同时运行的线程数
-        :param session: 使用的Session对象，或配置对象、页面对象等
         :param file_exists: 有同名文件名时的处理方式，可选 'skip', 'overwrite', 'rename', 'add'
+        :param driver: 使用的Session对象，或配置对象、页面对象等
         """
         self._roads = roads
         self._missions = {}
@@ -54,7 +54,7 @@ class DownloadKit(object):
         self.file_exists = file_exists
         self.split = True
         self.block_size = '50M'
-        self.set.driver(session)
+        self.set.driver(session or driver)
 
     def __call__(self, file_url, goal_path=None, rename=None, file_exists=None, show_msg=True, **kwargs):
         """以阻塞的方式下载一个文件并返回结果
@@ -118,17 +118,17 @@ class DownloadKit(object):
 
     @property
     def session(self):
+        """返回用于保存默认连接设置的Session对象"""
         return self._session
 
     @property
     def is_running(self):
         """返回是否有线程还在运行"""
         return self._running_count > 0
-        # return any([i for i in self._missions.values() if not i.is_done])
-        # return any(self._threads.values()) or not self.waiting_list.empty()
 
     @property
     def missions(self):
+        """用list方式返回所有任务对象"""
         return self._missions
 
     def add(self, file_url, goal_path=None, rename=None, file_exists=None, split=None, **kwargs):
@@ -222,10 +222,10 @@ class DownloadKit(object):
         """等待所有或指定任务完成
         :param mission: 任务对象或任务id，为None时等待所有任务结束
         :param show: 是否显示进度
-        :param timeout: 超时时间，默认为连接超时时间，0为无限
+        :param timeout: 超时时间，None或0为无限
         :return: 任务结果和信息组成的tuple
         """
-        timeout = timeout if timeout is not None else self.timeout
+        timeout = 0 if timeout is None else timeout
         if mission:
             return self.get_mission(mission).wait(show, timeout)
 
@@ -442,18 +442,18 @@ class DownloadKit(object):
             chunks[-1][-1] = ''
             chunks_len = len(chunks)
 
-            task1 = Task(mission, chunks[0], f'1/{chunks_len}')
+            task1 = Task(mission, chunks[0], f'1/{chunks_len}', chunks[0][1] - chunks[0][0])
             mission.tasks_count = chunks_len
-            mission.tasks = []
-            mission.tasks.append(task1)
+            mission.tasks = [task1]
 
             for ind, chunk in enumerate(chunks[1:], 2):
-                task = Task(mission, chunk, f'{ind}/{chunks_len}')
+                s = file_size - chunk[0] if chunks_len == ind else chunk[1] - chunk[0]
+                task = Task(mission, chunk, f'{ind}/{chunks_len}', s)
                 mission.tasks.append(task)
                 self._run_or_wait(task)
 
         else:  # 不分块
-            task1 = Task(mission, None, '1/1')
+            task1 = Task(mission, None, '1/1', file_size)
             mission.tasks.append(task1)
 
         self._threads[thread_id]['mission'] = task1
@@ -471,7 +471,7 @@ def _do_download(r: Response, task: Task, first: bool = False):
         return
 
     task.set_states(result=None, info='下载中', state='running')
-    block_size = 2  # 64k
+    block_size = 131072  # 128k
     result = None
 
     try:
@@ -545,213 +545,3 @@ def _do_download(r: Response, task: Task, first: bool = False):
         r.close()
 
     task._set_done(result=result, info=info)
-
-
-class Setter(object):
-    def __init__(self, downloadKit):
-        """
-        :param downloadKit: downloadKit对象
-        """
-        self._downloadKit: DownloadKit = downloadKit
-
-    @property
-    def DownloadKit(self):
-        """返回使用的DownloadKit对象"""
-        return self._downloadKit
-
-    @property
-    def if_file_exists(self):
-        """返回用于设置文件同名策略的对象"""
-        return FileExists(self)
-
-    @property
-    def log_mode(self):
-        """返回用于设置记录模式的对象"""
-        return LogSet(self)
-
-    def driver(self, driver):
-        """设置Session对象
-        :param driver: Session对象或DrissionPage的页面对象
-        :return: None
-        """
-        self._downloadKit._copy_cookies = False
-        if isinstance(driver, Session):
-            self._downloadKit._session = driver
-            return
-
-        try:
-            from DrissionPage.base import BasePage
-            from DrissionPage import SessionPage, WebPage
-            from DrissionPage.chromium_tab import WebPageTab
-            from DrissionPage import SessionOptions
-            if isinstance(driver, (WebPageTab, WebPage)):
-                self._downloadKit._session = driver.session
-                self._downloadKit.page = driver
-                self._downloadKit._copy_cookies = True
-                return
-            elif isinstance(driver, SessionPage):
-                self._downloadKit._session = driver.session
-                self._downloadKit.page = driver
-                return
-            elif isinstance(driver, BasePage):
-                self._downloadKit._session = Session()
-                self._downloadKit.page = driver
-                self._downloadKit._copy_cookies = True
-                return
-            elif isinstance(driver, SessionOptions):
-                self._downloadKit._session = driver.make_session()
-                return
-        except ModuleNotFoundError:
-            pass
-
-        self._downloadKit._session = Session()
-
-    def roads(self, num):
-        """设置可同时运行的线程数
-        :param num: 线程数量
-        :return: None
-        """
-        if self._downloadKit.is_running:
-            print('有任务未完成时不能改变roads。')
-            return
-        if num != self._downloadKit.roads:
-            self._downloadKit._roads = num
-            self._downloadKit._threads = {i: None for i in range(num)}
-
-    def retry(self, times):
-        """设置连接失败时重试次数
-        :param times: 重试次数
-        :return: None
-        """
-        if not isinstance(times, int) or times < 0:
-            raise TypeError('times参数只能接受int格式且不能小于0。')
-        self._downloadKit._retry = times
-
-    def interval(self, seconds):
-        """设置连接失败时重试间隔
-        :param seconds: 连接失败时重试间隔（秒）
-        :return: None
-        """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._downloadKit._interval = seconds
-
-    def timeout(self, seconds):
-        """设置连接超时时间
-        :param seconds: 超时时间（秒）
-        :return: None
-        """
-        if not isinstance(seconds, (int, float)) or seconds < 0:
-            raise TypeError('seconds参数只能接受int或float格式且不能小于0。')
-        self._downloadKit._timeout = seconds
-
-    def goal_path(self, path):
-        """设置文件保存路径
-        :param path: 文件路径，可以是str或Path
-        :return: None
-        """
-        self._downloadKit.goal_path = path
-
-    def split(self, on_off):
-        """设置大文件是否分块下载
-        :param on_off: bool代表开关
-        :return: None
-        """
-        self._downloadKit.split = on_off
-
-    def block_size(self, size):
-        """设置分块大小
-        :param size: 单位为字节，可用'K'、'M'、'G'为单位，如'50M'
-        :return: None
-        """
-        self._downloadKit.block_size = size
-
-    def proxies(self, http=None, https=None):
-        """设置代理地址及端口，例：'127.0.0.1:1080'
-        :param http: http代理地址及端口
-        :param https: https代理地址及端口
-        :return: None
-        """
-        self._downloadKit._session.proxies = {'http': http, 'https': https}
-
-
-class LogSet(object):
-    """用于设置信息打印和记录日志方式"""
-
-    def __init__(self, setter):
-        """
-        :param setter: Setter对象
-        """
-        self._setter = setter
-
-    def log_path(self, log_path):
-        """设置日志文件路径
-        :param log_path: 文件路径，可以是str或Path
-        :return: None
-        """
-        if self._setter.DownloadKit._logger is not None:
-            self._setter.DownloadKit._logger.record()
-        self._setter.DownloadKit._logger = Recorder(log_path)
-
-    def print_all(self):
-        """打印所有信息"""
-        self._setter.DownloadKit._print_mode = 'all'
-
-    def print_failed(self):
-        """只有在下载失败时打印信息"""
-        self._setter.DownloadKit._print_mode = 'failed'
-
-    def print_nothing(self):
-        """不打印任何信息"""
-        self._setter.DownloadKit._print_mode = None
-
-    def log_all(self):
-        """记录所有信息"""
-        if self._setter.DownloadKit._logger is None:
-            raise RuntimeError('请先用log_path()设置log文件路径。')
-        self._setter.DownloadKit._log_mode = 'all'
-
-    def log_failed(self):
-        """只记录下载失败的信息"""
-        if self._setter.DownloadKit._logger is None:
-            raise RuntimeError('请先用log_path()设置log文件路径。')
-        self._setter.DownloadKit._log_mode = 'failed'
-
-    def log_nothing(self):
-        """不进行记录"""
-        self._setter.DownloadKit._log_mode = None
-
-
-class FileExists(object):
-    """用于设置存在同名文件时处理方法"""
-
-    def __init__(self, setter):
-        """
-        :param setter: Setter对象
-        """
-        self._setter = setter
-
-    def __call__(self, mode):
-        """设置文件存在时的处理方式
-        :param mode: 'skip', 'rename', 'overwrite', 'add'
-        :return: None
-        """
-        if mode not in ('skip', 'rename', 'overwrite', 'add'):
-            raise ValueError("mode参数只能是'skip', 'rename', 'overwrite', 'add'")
-        self._setter.DownloadKit.file_exists = mode
-
-    def skip(self):
-        """设为跳过"""
-        self._setter.DownloadKit.file_exists = 'skip'
-
-    def rename(self):
-        """设为重命名，文件名后加序号"""
-        self._setter.DownloadKit.file_exists = 'rename'
-
-    def overwrite(self):
-        """设为覆盖"""
-        self._setter.DownloadKit.file_exists = 'overwrite'
-
-    def add(self):
-        """设为追加"""
-        self._setter.DownloadKit.file_exists = 'add'

@@ -1,11 +1,18 @@
-## 简介
+---
+hide:
+  - navigation
+---
+
+## 💬 简介
 
 DownloadKit 是一个基于 python 的简洁易用的多线程文件下载工具。
 使用简单，功能强大。
 
+当前版本：v1.0.2
+
 ---
 
-## 特性
+## 💖 特性
 
 - 多线程，可同时下载多个文件
 - 大文件自动分块用多线程下载
@@ -20,7 +27,7 @@ DownloadKit 是一个基于 python 的简洁易用的多线程文件下载工具
 
 ---
 
-## 简单示例
+## 💥 简单示例
 
 ```python
 from DownloadKit import DownloadKit

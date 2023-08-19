@@ -1,0 +1,80 @@
+site_name: DownloadKit
+site_url: http://g1879.gitee.io/DownloadKit/
+site_author: g1879
+site_description: DownloadKit是一个简洁易用的多线程文件下载工具，支持多线程，功能丰富使用简单。
+repo_url: https://gitee.com/g1879/DownloadKit
+markdown_extensions:
+  - admonition  # 提示块
+
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - def_list
+
+  - pymdownx.tasklist: # 待办列表
+      custom_checkbox: true
+
+  - tables
+
+theme:
+  name: material
+  font:
+    code: Roboto Mono
+  icon:
+    admonition:
+      note: octicons/tag-16
+      abstract: octicons/checklist-16
+      info: octicons/info-16
+      tip: octicons/squirrel-16
+      success: octicons/check-16
+      question: octicons/question-16
+      warning: octicons/alert-16
+      failure: octicons/x-circle-16
+      danger: octicons/zap-16
+      bug: octicons/bug-16
+      example: octicons/beaker-16
+      quote: octicons/quote-16
+
+  palette:
+    - scheme: default
+      primary: brown
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+      # Palette toggle for dark mode
+    - scheme: slate
+      primary: brown
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  features:
+    - navigation.top  # 返回顶部按钮
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy  # 代码复制按钮
+    - navigation.tabs  # 使用标签页
+    - navigation.tabs.sticky  # 标签页不消失
+    - header.autohide  # 自动隐藏标题栏
+    - navigation.footer  # 上一页和下一页
+
+nav:
+  - 欢迎: index.md
+
+  - 安装和导入: install_and_import.md
+
+  - 使用方法:
+      - 🐘 创建对象: usage/create_object.md
+      - 🐎 添加任务: usage/add_missions.md
+      - 🐒 任务管理: usage/misssions.md
+      - 🦍 运行设置: usage/settings.md
+      - 🐇 APIs: usage/APIs.md
+
+  - 版本历史: history.md
+
+  - 意见建议: https://gitee.com/g1879/DownloadKit/issues

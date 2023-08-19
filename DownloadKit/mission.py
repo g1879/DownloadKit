@@ -128,10 +128,12 @@ class Mission(BaseTask):
     @property
     def rate(self):
         """返回下载进度百分比"""
-        if self.path and self.path.exists():
-            return round((self.path.stat().st_size / self.size) * 100, 2) if self.size else None
-        else:
-            return
+        if not self.size:
+            return None
+        c = 0
+        for t in self.tasks:
+            c += t._downloaded_size if t._downloaded_size else 0
+        return round((c / self.size) * 100, 2)
 
     def cancel(self) -> None:
         """取消该任务，停止未下载完的task"""
@@ -285,7 +287,7 @@ class Mission(BaseTask):
 
 
 class Task(BaseTask):
-    def __init__(self, mission, range_, ID):
+    def __init__(self, mission, range_, ID, size):
         """子任务类
         :param mission: 父任务对象
         :param range_: 读取文件数据范围
@@ -294,9 +296,11 @@ class Task(BaseTask):
         super().__init__(ID)
         self.mission = mission
         self.range = range_
+        self.size = size
+        self._downloaded_size = 0
 
     def __repr__(self):
-        return f'<Task M{self.mid} T{self._id}  {self.info} {self.file_name}>'
+        return f'<Task M{self.mid} T{self._id} {self.rate}% {self.info} {self.file_name}>'
 
     @property
     def mid(self):
@@ -318,12 +322,18 @@ class Task(BaseTask):
         """返回文件名"""
         return self.mission.file_name
 
+    @property
+    def rate(self):
+        """返回下载进度百分比"""
+        return round((self._downloaded_size / self.size) * 100, 2) if self.size else None
+
     def add_data(self, data, seek=None):
         """把数据输入到记录器
         :param data: 文件字节数据
         :param seek: 在文件中的位置，None表示最后
         :return: None
         """
+        self._downloaded_size += len(data)
         self.mission.recorder.add_data(data, seek)
 
     def clear_cache(self):
